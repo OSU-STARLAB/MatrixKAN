@@ -74,7 +74,7 @@ class MatrixKANLinear(torch.nn.Module):
 
         basis_matrix = torch.tensor([
             [1]
-        ], dtype=torch.float32)
+        ], dtype=torch.float32, device=self.device)
 
         scalar = 1
 
@@ -84,8 +84,8 @@ class MatrixKANLinear(torch.nn.Module):
             term_1 = torch.nn.functional.pad(basis_matrix, (0, 0, 0, 1), "constant", 0)
             term_3 = torch.nn.functional.pad(basis_matrix, (0, 0, 1, 0), "constant", 0)
 
-            term_2 = torch.zeros((k - 1, k))
-            term_4 = torch.zeros((k - 1, k))
+            term_2 = torch.zeros((k - 1, k), device=self.device)
+            term_4 = torch.zeros((k - 1, k), device=self.device)
             for i in range(k - 1):
                 term_2[i, i] = i + 1
                 term_2[i, i + 1] = k - (i + 2)
