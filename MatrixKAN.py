@@ -64,39 +64,40 @@ class MatrixKANLinear(torch.nn.Module):
 
         self.reset_parameters()
 
-    def basis_matrix(self):                                               ############# UPDATE PARAMETERS #############
+    def basis_matrix(self):
         """
-        Compute basis matrix for a given knot vector and spline degree.
-
-        :Args:
-            TBD                                                                          ####### UPDATE ######
+        Compute the basis matrix for a uniform B-spline with a given spline degree.
 
         Returns:
-            torch.Tensor: Basis matrix tensor of shape (TBD, TBD).                       ####### UPDATE ######
+            torch.Tensor: Basis matrix tensor of shape (spline_order + 1, spline_order + 1).
         """
 
-        """
-        
-        # Temp hard-coded basis matrix (order 3 / degree 2)
         basis_matrix = torch.tensor([
-            [1, 1, 0],
-            [-2, 2, 0],
-            [1, -2, 1]
-        ], dtype=torch.float32,
-        device=self.device)
-        basis_matrix *= 0.5
-        """
+            [1]
+        ], dtype=torch.float32)
 
-        # Temp hard-coded basis matrix (order 5 / degree 4)
-        basis_matrix = torch.tensor([
-            [1, 11, 11, 1, 0],
-            [-4, -12, 12, 4, 0],
-            [6, -6, -6, 6, 0],
-            [-4, -12, -12, 4, 0],
-            [1, -4, 6, -4, 1]
-        ], dtype=torch.float32,
-            device=self.device)
-        basis_matrix *= (1/24)
+        scalar = 1
+
+        k = 2
+
+        while k <= self.spline_order + 1:
+            term_1 = torch.nn.functional.pad(basis_matrix, (0, 0, 0, 1), "constant", 0)
+            term_3 = torch.nn.functional.pad(basis_matrix, (0, 0, 1, 0), "constant", 0)
+
+            term_2 = torch.zeros((k - 1, k))
+            term_4 = torch.zeros((k - 1, k))
+            for i in range(k - 1):
+                term_2[i, i] = i + 1
+                term_2[i, i + 1] = k - (i + 2)
+
+                term_4[i, i] = -1
+                term_4[i, i + 1] = 1
+
+            basis_matrix = torch.matmul(term_1, term_2) + torch.matmul(term_3, term_4)
+            scalar *= 1 / (k - 1)
+            k += 1
+
+        basis_matrix *= scalar
 
         return basis_matrix
 
