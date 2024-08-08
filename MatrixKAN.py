@@ -148,7 +148,7 @@ class MatrixKANLinear(torch.nn.Module):
             base = u1 ** i
             u = torch.cat((u, base), -1)
 
-        return u, grid_interval_floor, grid_interval_floor_indices
+        return u, grid_interval_floor_indices
 
     def b_spline_matrix(self, x: torch.Tensor):
         """
@@ -162,33 +162,39 @@ class MatrixKANLinear(torch.nn.Module):
         """
 
         # Calculate power bases
-        power_bases, grid_interval_floor, grid_interval_floor_indices = self.power_bases(x)
+        power_bases, grid_interval_floor_indices = self.power_bases(x)
 
-        # Calculate applicable control points from applicable grid interval
-        control_point_mask = grid_interval_floor[:, :, :, self.spline_order:-1]
-
+        # Calculate applicable control points
         if self.grid_size == 1:
             # If grid_size == 1, only one curve defined for spline / all control points apply.
-            control_point_floor = torch.zeros(grid_interval_floor_indices.shape)
+            control_point_floor_indices = torch.zeros(grid_interval_floor_indices.shape)
         else:
             # If grid_size > 1, multiple curves defined for spline / calculate applicable control points per input
             # For knot interval [u(i), u(i+1)), applicable control points are P(i-p) ... P(i)
-            control_point_floor = (grid_interval_floor_indices - self.spline_order).float()
+            control_point_floor_indices = (grid_interval_floor_indices - self.spline_order)
 
-        control_point_floor = control_point_floor.unsqueeze(-1)
-        control_point_ceiling = control_point_floor + self.spline_order
-        index_tensor = torch.arange(0, self.ctrl_pts_num, 1)\
-                            .unsqueeze(0).unsqueeze(0).expand(control_point_mask.shape).to(self.device)
-        control_point_mask = (index_tensor >= control_point_floor) & (index_tensor <= control_point_ceiling)
-        control_point_mask = control_point_mask.unsqueeze(2).repeat(1, 1, self.out_features, 1, 1)
+        control_point_floor_indices = control_point_floor_indices.unsqueeze(-1)
+
+        control_point_indices = torch.arange(0, self.spline_order + 1, 1) \
+            .unsqueeze(0).unsqueeze(0).unsqueeze(0).to(self.device)
+        control_point_indices = control_point_indices.expand(
+            control_point_floor_indices.size(0),
+            control_point_floor_indices.size(1),
+            control_point_floor_indices.size(2),
+            -1
+        )
+        control_point_indices = control_point_indices.clone()
+        control_point_indices += control_point_floor_indices
+        control_point_indices = control_point_indices.unsqueeze(2).expand(-1, -1, self.out_features, -1, -1)
+
         control_points = self.spline_weight.unsqueeze(0).unsqueeze(0).expand(
-            control_point_mask.size(0), control_point_mask.size(1), -1, -1, -1)
-        control_points = control_points[control_point_mask]
+            control_point_indices.size(0), control_point_indices.size(1), -1, -1, -1)
+        control_points = torch.gather(control_points, -1, control_point_indices)
         control_points = control_points.view(
-            control_point_mask.size(0),
-            control_point_mask.size(1),
-            control_point_mask.size(2),
-            control_point_mask.size(3),
+            control_point_indices.size(0),
+            control_point_indices.size(1),
+            control_point_indices.size(2),
+            control_point_indices.size(3),
             -1)
 
         # Calculate spline outputs
