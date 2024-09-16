@@ -3,12 +3,12 @@ auto_save: true
 base_fun_name: silu
 ckpt_path: ./model
 device: cuda
-grid: 3
-grid_eps: 0.02
+grid: 2
+grid_eps: 1
 grid_range:
 - -1
 - 1
-k: 2
+k: 3
 mult_arity: 2
 round: 0
 sb_trainable: true
@@ -20,14 +20,23 @@ symbolic.funs_name.0:
   - '0'
 - - '0'
   - '0'
+- - '0'
+  - '0'
+- - '0'
+  - '0'
+- - '0'
+  - '0'
 symbolic.funs_name.1:
 - - '0'
   - '0'
-symbolic_enabled: false
+  - '0'
+  - '0'
+  - '0'
+symbolic_enabled: true
 width:
 - - 2
   - 0
-- - 2
+- - 5
   - 0
 - - 1
   - 0

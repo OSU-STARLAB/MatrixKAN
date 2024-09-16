@@ -198,10 +198,17 @@ class MatrixKAN(nn.Module):
         self.spline_matrix = spline_matrix
         for l in range(self.depth):
             # splines
+            sp_batch = MatrixKANLayer(in_dim=width_in[l], out_dim=width_out[l + 1], num=grid, k=k,
+                                      noise_scale=noise_scale, scale_base_mu=scale_base_mu,
+                                      scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun,
+                                      grid_eps=grid_eps, grid_range=grid_range, sp_trainable=sp_trainable,
+                                      sb_trainable=sb_trainable, sparse_init=sparse_init, device=device)
+            """
             if spline_matrix:
                 sp_batch = MatrixKANLayer(in_dim=width_in[l], out_dim=width_out[l+1], num=grid, k=k, noise_scale=noise_scale, scale_base_mu=scale_base_mu, scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun, grid_eps=grid_eps, grid_range=grid_range, sp_trainable=sp_trainable, sb_trainable=sb_trainable, sparse_init=sparse_init, device=device)
             else:
                 sp_batch = KANLayer(in_dim=width_in[l], out_dim=width_out[l+1], num=grid, k=k, noise_scale=noise_scale, scale_base_mu=scale_base_mu, scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun, grid_eps=grid_eps, grid_range=grid_range, sp_trainable=sp_trainable, sb_trainable=sb_trainable, sparse_init=sparse_init, device=device)
+            """
             self.act_fun.append(sp_batch)
 
         self.node_bias = []
