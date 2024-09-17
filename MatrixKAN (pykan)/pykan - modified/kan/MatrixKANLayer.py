@@ -114,17 +114,22 @@ class MatrixKANLayer(nn.Module):
         self.scale_sp = torch.nn.Parameter(torch.ones(in_dim, out_dim) * scale_sp * self.mask).requires_grad_(sp_trainable)  # make scale trainable
         self.base_fun = base_fun
         # self.grid_range = grid_range
-        self.grid_range = torch.tensor(grid_range, device=device).unsqueeze(0).expand(in_dim, -1)
+        self.grid_range = torch.tensor(grid_range).unsqueeze(0).expand(in_dim, -1)
         self.grid_range = self.grid_range.clone().to(dtype=torch.float64)
         # self.grid_interval = (grid_range[1] - grid_range[0]) / num
         self.grid_intervals = ((self.grid_range[:,1] - self.grid_range[:,0]) / num)
+        self.grid_range = torch.nn.Parameter(self.grid_range).requires_grad_(False)
+        self.grid_intervals = torch.nn.Parameter(self.grid_intervals).requires_grad_(False)
+
         self.device = device
 
         self.layer_norm = torch.nn.Tanh()
         self.layer_norm_scalars = self.grid_range[:,-1]
+        self.layer_norm_scalars = torch.nn.Parameter(self.layer_norm_scalars).requires_grad_(False)
 
         # Initialize Basis Matrix
-        self.basis_matrix = self.basis_matrix()
+        self.basis_matrix = self.calculate_basis_matrix()
+        self.basis_matrix = torch.nn.Parameter(self.basis_matrix).requires_grad_(False)
 
         self.grid_eps = grid_eps
         
@@ -166,6 +171,7 @@ class MatrixKANLayer(nn.Module):
         batch = x.shape[0]
 
         x_norm = self.layer_norm(x)
+
         x_norm = x_norm * self.layer_norm_scalars
 
         preacts = x_norm[:, None, :].clone().expand(batch, self.out_dim, self.in_dim)
@@ -183,7 +189,7 @@ class MatrixKANLayer(nn.Module):
         y = torch.sum(y, dim=1)
         return y, preacts, postacts, postspline
 
-    def basis_matrix(self):
+    def calculate_basis_matrix(self):
         """
         Compute the basis matrix for a uniform B-spline with a given spline degree.
 
@@ -373,7 +379,7 @@ class MatrixKANLayer(nn.Module):
         self.grid_intervals = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.num
 
         # Determine scalar for new layer_norm and update
-        self.layer_norm_scalars = self.grid_range[:,-1]
+        self.layer_norm_scalars = self.grid_range[:,-1].to(device=self.device)
 
         self.grid.data = extend_grid(grid, k_extend=self.k)
         self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
@@ -501,7 +507,7 @@ class MatrixKANLayer(nn.Module):
         >>> kanlayer_small.in_dim, kanlayer_small.out_dim
         (2, 3)
         '''
-        spb = KANLayer(len(in_id), len(out_id), self.num, self.k, base_fun=self.base_fun)
+        spb = MatrixKANLayer(len(in_id), len(out_id), self.num, self.k, base_fun=self.base_fun)
         spb.grid.data = self.grid[in_id]
         spb.coef.data = self.coef[in_id][:,out_id]
         spb.scale_base.data = self.scale_base[in_id][:,out_id]
