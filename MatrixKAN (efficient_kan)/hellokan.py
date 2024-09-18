@@ -1,7 +1,8 @@
+from kan import LBFGS
 from kan.utils import create_dataset
-from kan.utils import ex_round
 from MatrixKAN import *
 from tqdm import tqdm
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -10,12 +11,12 @@ from dataset_util import *
 
 torch.set_default_dtype(torch.float64)
 
-#device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device = torch.device('cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# device = torch.device('cpu')
 
 # create dataset f(x,y) = exp(sin(pi*x)+y^2)
 f = lambda x: torch.exp(torch.sin(torch.pi*x[:,[0]]) + x[:,[1]]**2)
-dataset = create_dataset(f, n_var=2, device=device, train_num=100000, test_num=100000)
+dataset = create_dataset(f, n_var=2, device=device) #, train_num=100000, test_num=100000)
 
 train_dataset = NewDataSet(dataset["train_input"], dataset["train_label"])
 test_dataset = NewDataSet(dataset["test_input"], dataset["test_label"])
@@ -23,48 +24,63 @@ test_dataset = NewDataSet(dataset["test_input"], dataset["test_label"])
 train_loader = DataLoader(train_dataset, batch_size=100, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size=100, shuffle=False)
 
-model = MatrixKAN([2, 5, 1], base_activation=nn.Identity, grid_eps=1, device=device)
+model = MatrixKAN([2, 5, 1], grid_size=5, spline_order=3, base_activation=nn.Identity, grid_eps=1, device=device)
 model.to(device)
 
-#optimizer = torch.optim.LBFGS(model.parameters(), lr=1)
-optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+# DEFINE OPTIMIZER
+# optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+optimizer = optim.Adam(model.parameters(), lr=1e-2, weight_decay=1e-4)
+#optimizer = LBFGS(model.parameters(), lr=1., history_size=10, line_search_fn="strong_wolfe", tolerance_grad=1e-32, tolerance_change=1e-32, tolerance_ys=1e-32)
+def closure():
+    global train_loss, reg_
+    optimizer.zero_grad()
+    pred = model(dataset['train_input'][train_id])
+    train_loss = loss_fn(pred, dataset['train_label'][train_id])
+    reg_ = torch.tensor(0.)
+    objective = train_loss
+    objective.backward()
+    return objective
 
+# DEFINE SCHEDULER
 scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.8)
 
-criterion = nn.MSELoss()
-#criterion = nn.CrossEntropyLoss()
-for epoch in range(100):
+# DEFINE LOSS FUNCTION
+# criterion = nn.MSELoss()
+# criterion = nn.CrossEntropyLoss()
+loss_fn = loss_fn_eval = lambda x, y: torch.mean((x - y) ** 2)
+
+pbar = tqdm(range(1500), desc='description', ncols=100)
+
+for _ in pbar:
     # Train
     model.train()
-    with (tqdm(train_loader) as pbar):
-        for i, (inputs, labels) in enumerate(pbar):
-            optimizer.zero_grad()
-            output = model(inputs)
-            loss = criterion(output, labels.to(device))
-            loss.backward()
-            optimizer.step()
-            # accuracy = (output.argmax(dim=1) == labels.to(device)).float().mean()
-            accuracy = (output == labels.to(device)).float().mean()
-            # accuracy = (labels.to(device) == labels.to(device)).float().mean()
-            pbar.set_postfix(loss=loss.item(), accuracy=accuracy.item(), lr=optimizer.param_groups[0]['lr'])
+
+    train_id = np.random.choice(dataset['train_input'].shape[0], dataset['train_input'].shape[0], replace=False)
+    test_id = np.random.choice(dataset['test_input'].shape[0], dataset['test_input'].shape[0], replace=False)
+
+    ################## NON-LBFGS SCRIPT ###############
+    pred = model(dataset['train_input'][train_id])
+    loss = train_loss = loss_fn(pred, dataset['train_label'][train_id])
+    reg_ = torch.tensor(0.)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+    ################# LBFGS SCRIPT ######################
+    """
+    optimizer.step(closure)
+    """
 
     # Validate
     model.eval()
-    test_loss = 0
-    test_accuracy = 0
     with torch.no_grad():
         for inputs, labels in test_loader:
-            output = model(inputs)
-            test_loss += criterion(output, labels.to(device)).item()
-            test_accuracy += (
-                (output.argmax(dim=1) == labels.to(device)).float().mean().item()
-            )
-    test_loss /= len(test_loader)
-    test_accuracy /= len(test_loader)
+            pred = model(inputs)
+            test_loss = loss_fn_eval(pred, labels.to(device))
+
+    pbar.set_description("| train_loss: %.2e | test_loss: %.2e | reg: %.2e | " % (
+    torch.sqrt(train_loss).cpu().detach().numpy(), torch.sqrt(test_loss).cpu().detach().numpy(),
+    reg_.cpu().detach().numpy()))
 
     # Update learning rate
     # scheduler.step()
-
-    print(
-        f"Epoch {epoch + 1}, Val Loss: {test_loss}, Val Accuracy: {test_accuracy}"
-    )
