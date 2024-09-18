@@ -13,7 +13,7 @@ model = MatrixKAN(width=[2,5,1], grid=3, k=2, seed=42, device=device, spline_mat
 
 # create dataset f(x,y) = exp(sin(pi*x)+y^2)
 f = lambda x: torch.exp(torch.sin(torch.pi*x[:,[0]]) + x[:,[1]]**2)
-dataset = create_dataset(f, n_var=2, device=device, train_num=5, test_num=5)
+dataset = create_dataset(f, n_var=2, device=device, train_num=4, test_num=4)
 
 # plot KAN at initialization
 model(dataset['train_input'])

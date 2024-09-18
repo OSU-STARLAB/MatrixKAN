@@ -42,9 +42,9 @@ class MatrixKANLinear(torch.nn.Module):
         self.knots_num = (self.ctrl_pts_num - 1) + self.spline_order + 2
 
         # Initialized Trainable Parameters
-        self.base_weight = torch.nn.Parameter(torch.tensor(torch.ones(out_features, in_features), dtype=torch.float))
+        self.base_weight = torch.nn.Parameter(torch.tensor(torch.ones(out_features, in_features), dtype=torch.float64))
         self.spline_weight = torch.nn.Parameter(
-            torch.tensor(torch.ones(out_features, in_features, grid_size + spline_order), dtype=torch.float)
+            torch.tensor(torch.ones(out_features, in_features, grid_size + spline_order), dtype=torch.float64)
         )
 
         if enable_standalone_scale_spline:
@@ -84,8 +84,8 @@ class MatrixKANLinear(torch.nn.Module):
             term_1 = torch.nn.functional.pad(basis_matrix, (0, 0, 0, 1), "constant", 0)
             term_3 = torch.nn.functional.pad(basis_matrix, (0, 0, 1, 0), "constant", 0)
 
-            term_2 = torch.zeros((k - 1, k), device=self.device)
-            term_4 = torch.zeros((k - 1, k), device=self.device)
+            term_2 = torch.zeros((k - 1, k), device=self.device, dtype=torch.float32)
+            term_4 = torch.zeros((k - 1, k), device=self.device, dtype=torch.float32)
             for i in range(k - 1):
                 term_2[i, i] = i + 1
                 term_2[i, i + 1] = k - (i + 2)
@@ -99,7 +99,7 @@ class MatrixKANLinear(torch.nn.Module):
 
         basis_matrix *= scalar
 
-        return basis_matrix
+        return basis_matrix.to(torch.float64)
 
     def power_bases(self, x: torch.Tensor):
         """
@@ -140,7 +140,7 @@ class MatrixKANLinear(torch.nn.Module):
 
         # Calculate power bases
         u1_numerator = x - x_interval_floor
-        u1_denominator = x_interval_ceiling - x_interval_floor
+        u1_denominator = x_interval_ceiling - x_interval_floor  ############# REPLACE WITH GRID_INTERVALS ##########
         u1 = (u1_numerator / u1_denominator).unsqueeze(-1)
         ones = torch.ones(u1.shape, dtype=x.dtype, device=self.device)
         u = torch.cat((ones, u1), -1)
@@ -177,33 +177,31 @@ class MatrixKANLinear(torch.nn.Module):
 
         control_point_floor_indices = control_point_floor_indices.unsqueeze(-1)
 
-        control_point_indices = torch.arange(0, self.spline_order + 1, 1) \
-            .unsqueeze(0).unsqueeze(0).unsqueeze(0).to(self.device)
+        control_point_indices = torch.arange(0, self.spline_order + 1, 1).unsqueeze(0).unsqueeze(0).to(self.device)
         control_point_indices = control_point_indices.expand(
             control_point_floor_indices.size(0),
             control_point_floor_indices.size(1),
-            control_point_floor_indices.size(2),
             -1
         )
         control_point_indices = control_point_indices.clone()
         control_point_indices += control_point_floor_indices
-        control_point_indices = control_point_indices.unsqueeze(2).expand(-1, -1, self.out_features, -1, -1)
+        control_point_indices = control_point_indices.unsqueeze(1).expand(-1, self.out_features, -1, -1)
 
-        control_points = self.spline_weight.unsqueeze(0).unsqueeze(0).expand(
-            control_point_indices.size(0), control_point_indices.size(1), -1, -1, -1)
+        control_points = self.spline_weight.unsqueeze(0).expand(
+            control_point_indices.size(0), -1, -1, -1)
         control_points = torch.gather(control_points, -1, control_point_indices)
         control_points = control_points.view(
             control_point_indices.size(0),
             control_point_indices.size(1),
             control_point_indices.size(2),
-            control_point_indices.size(3),
             -1)
 
         # Calculate spline outputs
         prod1 = torch.matmul(power_bases, self.basis_matrix)
         prod1 = prod1.view(x.size(0), x.size(1), -1).unsqueeze(-2)
-        control_points = control_points.view(control_points.size(0), control_points.size(1), -1, control_points.size(2))
-        result = torch.matmul(prod1, control_points).squeeze(-2)
+        control_points = control_points.view(prod1.size(0), prod1.size(1), prod1.size(-1), -1)
+        result = torch.matmul(prod1, control_points)
+        result = result.squeeze(-2)
 
         return result
 
@@ -307,8 +305,10 @@ class MatrixKANLinear(torch.nn.Module):
     def forward(self, x: torch.Tensor):
         assert x.size(-1) == self.in_features
 
-        base_output = torch.matmul(self.base_activation(x), self.base_weight.transpose(-2, -1))
+        base_activations = self.base_activation(x)
+        base_output = torch.matmul(base_activations, self.base_weight.transpose(-2, -1))
         spline_output = self.b_spline_matrix(x)
+        spline_output = torch.sum(spline_output, dim=-2)
         output = base_output + spline_output
 
         return output
@@ -318,7 +318,7 @@ class MatrixKANLinear(torch.nn.Module):
         assert x.dim() == 2 and x.size(1) == self.in_features
         batch = x.size(0)
 
-        splines = self.b_splines(x)  # (batch, in, coeff)
+        splines = self.b_spline_matrix(x)  # (batch, in, coeff)
         splines = splines.permute(1, 0, 2)  # (in, batch, coeff)
         orig_coeff = self.scaled_spline_weight  # (out, in, coeff)
         orig_coeff = orig_coeff.permute(1, 2, 0)  # (in, coeff, out)

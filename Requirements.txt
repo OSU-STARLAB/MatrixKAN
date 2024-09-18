@@ -85,6 +85,7 @@ pydantic_core==2.18.2
 pydub==0.25.1
 pyflakes==3.2.0
 Pygments==2.18.0
+pykan
 pyparsing==3.1.1
 pyreadline3==3.4.1
 python-dateutil==2.8.2
