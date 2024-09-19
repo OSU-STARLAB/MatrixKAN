@@ -124,9 +124,9 @@ class MatrixKANLayer(nn.Module):
         self.device = device
 
         self.layer_norm = torch.nn.Tanh()
-        self.layer_norm_shifts = (self.grid_range[:,0] + self.grid_range[:,-1]) / 2
+        self.layer_norm_shifts = (self.grid_range[:, 0] + self.grid_range[:, -1]) / 2
+        self.layer_norm_scalars = (self.grid_range[:, -1] - self.grid_range[:, 0]) / 2
         self.layer_norm_shifts = torch.nn.Parameter(self.layer_norm_shifts).requires_grad_(False)
-        self.layer_norm_scalars = (self.grid_range[:,-1] - self.grid_range[:,0]) / 2
         self.layer_norm_scalars = torch.nn.Parameter(self.layer_norm_scalars).requires_grad_(False)
 
         # Initialize Basis Matrix
@@ -273,7 +273,7 @@ class MatrixKANLayer(nn.Module):
         grid_interval_floor_indices = torch.nonzero(grid_interval_floor, as_tuple=True)
         grid_interval_floor_indices = grid_interval_floor_indices[-1]
         if grid_interval_floor_indices.size(0) < (x.size(dim=0) * x.size(dim=1)):
-            print("help")
+            print("help")                                                                                                 ############### DEBUG ###################
         grid_interval_floor_indices = grid_interval_floor_indices.reshape(x.shape)
         grid_interval_floor_indices = torch.clamp(grid_interval_floor_indices, min=self.k, max=self.k + self.num - 1)
 
@@ -396,9 +396,8 @@ class MatrixKANLayer(nn.Module):
             y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
 
         self.grid_range[:, 0], self.grid_range[:, 1] = grid[:, 0], grid[:, -1]
-        self.grid_intervals = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.num
-        self.layer_norm_shifts = (self.grid_range[:, 0] + self.grid_range[:, -1]) / 2
-        self.layer_norm_scalars = (self.grid_range[:, -1] - self.grid_range[:, 0]) / 2
+        self.grid_intervals.data = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.num
+        self._update_layer_norms()
         
         self.grid.data = extend_grid(grid, k_extend=self.k)
         self.coef.data = curve2coef(x_pos * self.layer_norm_scalars, y_eval, self.grid, self.k)
@@ -452,8 +451,7 @@ class MatrixKANLayer(nn.Module):
 
         self.grid_range[:, 0], self.grid_range[:, 1] = grid[:, 0], grid[:, -1]
         self.grid_intervals.data = (self.grid_range.data[:, 1] - self.grid_range.data[:, 0]) / self.num
-        self.layer_norm_shifts.data = (self.grid_range.data[:, 0] + self.grid_range.data[:, -1]) / 2
-        self.layer_norm_scalars.data = (self.grid_range.data[:, -1] - self.grid_range.data[:, 0]) / 2
+        self._update_layer_norms()
 
         grid = extend_grid(grid, k_extend=self.k)
         self.grid.data = grid
@@ -530,3 +528,19 @@ class MatrixKANLayer(nn.Module):
             swap_(self.scale_sp.data, i1, i2, mode=mode)
             swap_(self.mask.data, i1, i2, mode=mode)
 
+    def _update_layer_norms(self):
+        """
+        update layer norms based on updated grids.
+
+        Args:
+        -----
+            None
+
+        Returns:
+        --------
+            None
+        """
+
+        self.layer_norm_shifts.data = (self.grid_range.data[:,0] + self.grid_range.data[:,-1]) / 2
+        self.layer_norm_scalars.data = (self.grid_range.data[:,-1] - self.grid_range.data[:,0]) / 2
+        self.layer_norm_scalars[self.layer_norm_scalars == 0.] += 1

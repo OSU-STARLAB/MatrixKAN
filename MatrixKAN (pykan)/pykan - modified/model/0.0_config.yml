@@ -2,7 +2,7 @@ affine_trainable: false
 auto_save: true
 base_fun_name: silu
 ckpt_path: ./model
-device: cpu
+device: cuda
 grid: 3
 grid_eps: 1
 grid_range:
@@ -13,7 +13,6 @@ mult_arity: 2
 round: 0
 sb_trainable: true
 sp_trainable: true
-spline_matrix: true
 state_id: 0
 symbolic.funs_name.0:
 - - '0'

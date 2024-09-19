@@ -286,7 +286,7 @@ class LBFGS(Optimizer):
         for p, pdata in zip(self._params, params_data):
             p.copy_(pdata)
 
-    def _directional_evaluate(self, closure, x, t, d):
+    def _directional_evaluate(self, closure, x, t, d):                                                                                              ############# DEBUG ##############
         self._add_grad(t, d)
         loss = float(closure())
         flat_grad = self._gather_flat_grad()
@@ -352,6 +352,7 @@ class LBFGS(Optimizer):
         n_iter = 0
         # optimize for a max of max_iter iterations
         while n_iter < max_iter:
+
             # keep track of nb of iterations
             n_iter += 1
             state['n_iter'] += 1
