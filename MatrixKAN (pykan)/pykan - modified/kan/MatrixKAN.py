@@ -198,7 +198,7 @@ class MatrixKAN(nn.Module):
         self.spline_matrix = spline_matrix
         for l in range(self.depth):
             # splines
-            """
+
             sp_batch = MatrixKANLayer(in_dim=width_in[l], out_dim=width_out[l + 1], num=grid, k=k,
                                       noise_scale=noise_scale, scale_base_mu=scale_base_mu,
                                       scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun,
@@ -218,7 +218,7 @@ class MatrixKAN(nn.Module):
                                     scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun,
                                     grid_eps=grid_eps, grid_range=grid_range, sp_trainable=sp_trainable,
                                     sb_trainable=sb_trainable, sparse_init=sparse_init, device=device)
-
+            """
             self.act_fun.append(sp_batch)
 
         self.node_bias = []
@@ -1708,7 +1708,7 @@ class MatrixKAN(nn.Module):
                 if i not in active_neurons_down[l]:
                     self.remove_node(l + 1, i, mode='down',log_history=False)
 
-        model2 = MatrixKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun_name, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round, device=self.device, spline_matrix=self.spline_matrix)
+        model2 = MatrixKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun_name, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round, device=self.device, spline_matrix=self.spline_matrix, grid_eps=self.grid_eps)
         model2.load_state_dict(self.state_dict())
 
         width_new = [self.width[0]]
@@ -1870,7 +1870,7 @@ class MatrixKAN(nn.Module):
         else:
             input_id = torch.tensor(active_inputs, dtype=torch.long).to(self.device)
 
-        model2 = MatrixKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round, device=self.device, spline_matrix=self.spline_matrix)
+        model2 = MatrixKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round, device=self.device, spline_matrix=self.spline_matrix, grid_eps=self.grid_eps)
         model2.load_state_dict(self.state_dict())
 
         model2.act_fun[0] = model2.act_fun[0].get_subset(input_id, torch.arange(self.width_out[1]))
@@ -2381,7 +2381,7 @@ class MatrixKAN(nn.Module):
 
         # add kanlayer, set mask to zero
         dim_out = self.width_in[-1]
-        layer = MatrixKANLayer(dim_out, dim_out, num=self.grid, k=self.k, device=self.device)
+        layer = MatrixKANLayer(dim_out, dim_out, num=self.grid, k=self.k, device=self.device, grid_eps=self.grid_eps)
         layer.mask *= 0.
         self.act_fun.append(layer)
 
@@ -2452,7 +2452,7 @@ class MatrixKAN(nn.Module):
                                 new.affine.data[j][i] = old.affine.data[j-n_added_nodes][i]
 
                     self.symbolic_fun[l] = new
-                    self.act_fun[l] = MatrixKANLayer(in_dim, out_dim + n_added_nodes, num=self.grid, k=self.k, device=self.device)
+                    self.act_fun[l] = MatrixKANLayer(in_dim, out_dim + n_added_nodes, num=self.grid, k=self.k, device=self.device, grid_eps=self.grid_eps)
                     self.act_fun[l].mask *= 0.
 
                     self.node_scale[l].data = torch.cat([torch.ones(n_added_nodes, device=self.device), self.node_scale[l].data])
@@ -2483,7 +2483,7 @@ class MatrixKAN(nn.Module):
                                 new.affine.data[j][i] = old.affine.data[j][i-n_added_nodes]
 
                     self.symbolic_fun[l] = new
-                    self.act_fun[l] = MatrixKANLayer(in_dim + n_added_nodes, out_dim, num=self.grid, k=self.k, device=self.device)
+                    self.act_fun[l] = MatrixKANLayer(in_dim + n_added_nodes, out_dim, num=self.grid, k=self.k, device=self.device, grid_eps=self.grid_eps)
                     self.act_fun[l].mask *= 0.
 
 
@@ -2514,7 +2514,7 @@ class MatrixKAN(nn.Module):
                                 new.affine.data[j][i] = old.affine.data[j][i]
 
                     self.symbolic_fun[l] = new
-                    self.act_fun[l] = MatrixKANLayer(in_dim, out_dim + n_added_subnodes, num=self.grid, k=self.k, device=self.device)
+                    self.act_fun[l] = MatrixKANLayer(in_dim, out_dim + n_added_subnodes, num=self.grid, k=self.k, device=self.device, grid_eps=self.grid_eps)
                     self.act_fun[l].mask *= 0.
 
                     self.node_scale[l].data = torch.cat([self.node_scale[l].data, torch.ones(n_added_nodes, device=self.device)])
@@ -2543,7 +2543,7 @@ class MatrixKAN(nn.Module):
                                 new.affine.data[j][i] = old.affine.data[j][i]
 
                     self.symbolic_fun[l] = new
-                    self.act_fun[l] = MatrixKANLayer(in_dim + n_added_nodes, out_dim, num=self.grid, k=self.k, device=self.device)
+                    self.act_fun[l] = MatrixKANLayer(in_dim + n_added_nodes, out_dim, num=self.grid, k=self.k, device=self.device, grid_eps=self.grid_eps)
                     self.act_fun[l].mask *= 0.
 
         _expand(layer_id-1, n_added_nodes, sum_bool, mult_arity, added_dim='out')

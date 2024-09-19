@@ -97,7 +97,7 @@ class MatrixKANLayer(nn.Module):
         self.num = num
         self.k = k
 
-        grid = torch.linspace(grid_range[0], grid_range[1], steps=num + 1)[None,:].to(dtype=torch.float64).expand(self.in_dim, num+1)
+        grid = torch.linspace(grid_range[0], grid_range[1], steps=num + 1)[None,:].expand(self.in_dim, num+1)
         grid = extend_grid(grid, k_extend=k)
         self.grid = torch.nn.Parameter(grid).requires_grad_(False)
         noises = (torch.rand(self.num+1, self.in_dim, self.out_dim) - 1/2) * noise_scale / num
@@ -114,7 +114,7 @@ class MatrixKANLayer(nn.Module):
         self.scale_sp = torch.nn.Parameter(torch.ones(in_dim, out_dim) * scale_sp * self.mask).requires_grad_(sp_trainable)  # make scale trainable
         self.base_fun = base_fun
         # self.grid_range = grid_range
-        self.grid_range = torch.tensor(grid_range, device=device).unsqueeze(0).expand(in_dim, -1)
+        self.grid_range = torch.tensor(grid_range).unsqueeze(0).expand(in_dim, -1)
         self.grid_range = self.grid_range.clone().to(dtype=torch.float64)
         # self.grid_interval = (grid_range[1] - grid_range[0]) / num
         self.grid_intervals = ((self.grid_range[:,1] - self.grid_range[:,0]) / num)
@@ -124,9 +124,7 @@ class MatrixKANLayer(nn.Module):
         self.device = device
 
         self.layer_norm = torch.nn.Tanh()
-        self.layer_norm_shifts = (self.grid_range[:,0] + self.grid_range[:,-1]) / 2
-        self.layer_norm_shifts = torch.nn.Parameter(self.layer_norm_shifts).requires_grad_(False)
-        self.layer_norm_scalars = (self.grid_range[:,-1] - self.grid_range[:,0]) / 2
+        self.layer_norm_scalars = self.grid_range[:,-1]
         self.layer_norm_scalars = torch.nn.Parameter(self.layer_norm_scalars).requires_grad_(False)
 
         # Initialize Basis Matrix
@@ -172,16 +170,14 @@ class MatrixKANLayer(nn.Module):
         '''
         batch = x.shape[0]
 
-        x = x - self.layer_norm_shifts
-        x = x / self.layer_norm_scalars
-        x = self.layer_norm(x)
-        x = x * self.layer_norm_scalars
-        x = x + self.layer_norm_shifts
+        x_norm = self.layer_norm(x)
 
-        preacts = x[:, None, :].clone().expand(batch, self.out_dim, self.in_dim)
+        x_norm = x_norm * self.layer_norm_scalars
+
+        preacts = x_norm[:, None, :].clone().expand(batch, self.out_dim, self.in_dim)
             
-        base = self.base_fun(x) # (batch, in_dim)
-        y = self.b_spline_matrix(x)
+        base = self.base_fun(x_norm) # (batch, in_dim)
+        y = self.b_spline_matrix(x_norm)
         
         postspline = y.clone().permute(0,2,1)
             
@@ -251,31 +247,23 @@ class MatrixKANLayer(nn.Module):
         # Determine applicable grid interval values (lower-bound)
         grid_floors = self.grid[:,0]
         grid_floors = grid_floors.unsqueeze(0).expand(x.shape[0], -1)
-        x_interval_floor = torch.floor((x - grid_floors) / self.grid_intervals)
+        x_pos = x - grid_floors
+        x_interval_floor = torch.floor(x_pos / self.grid_intervals)
         x_interval_floor = ((x_interval_floor * self.grid_intervals) + grid_floors)
 
         # Determine applicable grid interval values (upper-bound)
         x_interval_ceiling = x_interval_floor + self.grid_intervals
 
         # Calculate grid indices of interval floor
-        """
         if self.grid.shape[-1] != x_interval_floor.shape[-1]:
             x_interval_floor = x_interval_floor.unsqueeze(-1)
         grid_interval_floor = torch.isclose(self.grid, x_interval_floor)
-        """
-        x = x.unsqueeze(dim=2)
-        grid = self.grid.unsqueeze(dim=0)
-        grid_interval_floor = (x >= grid[:, :, :-1]) * (x < grid[:, :, 1:])
-        x = x.squeeze(dim=2)
 
         # Calculate index position of the lower knot in the applicable knot span.
         # This is later used to calculate the applicable control points / basis functions.
         grid_interval_floor_indices = torch.nonzero(grid_interval_floor, as_tuple=True)
         grid_interval_floor_indices = grid_interval_floor_indices[-1]
-        if grid_interval_floor_indices.size(0) < (x.size(dim=0) * x.size(dim=1)):
-            print("help")
         grid_interval_floor_indices = grid_interval_floor_indices.reshape(x.shape)
-        grid_interval_floor_indices = torch.clamp(grid_interval_floor_indices, min=self.k, max=self.k + self.num - 1)
 
         # Calculate power bases
         if x.shape[-1] != x_interval_floor.shape[-1]:
@@ -291,7 +279,7 @@ class MatrixKANLayer(nn.Module):
 
         return u, grid_interval_floor_indices
 
-    def b_spline_matrix(self, x: torch.Tensor, normalized=True):
+    def b_spline_matrix(self, x: torch.Tensor):
         """
         Compute spline output for the given input tensor.
 
@@ -301,13 +289,6 @@ class MatrixKANLayer(nn.Module):
         Returns:
             torch.Tensor:       Power bases tensor of shape (batch_size, sequence length, out_features).
         """
-
-        if not normalized:
-            x = x - self.layer_norm_shifts
-            x = x / self.layer_norm_scalars
-            x = self.layer_norm(x)
-            x = x * self.layer_norm_scalars
-            x = x + self.layer_norm_shifts
 
         # Calculate power bases
         power_bases, grid_interval_floor_indices = self.power_bases(x)
@@ -352,6 +333,57 @@ class MatrixKANLayer(nn.Module):
 
         return result
 
+    def update_grid_from_samples_uniform(self, x, mode='sample'):
+        '''
+        update grid from samples (uniform)
+
+        Args:
+        -----
+            x : 2D torch.float
+                inputs, shape (number of samples, input dimension)
+
+        Returns:
+        --------
+            None
+
+        Example
+        -------
+        >>> model = KANLayer(in_dim=1, out_dim=1, num=5, k=3)
+        >>> print(model.grid.data)
+        >>> x = torch.linspace(-3,3,steps=100)[:,None]
+        >>> model.update_grid_from_samples(x)
+        >>> print(model.grid.data)
+        '''
+
+        batch = x.shape[0]
+        x_pos = torch.sort(x, dim=0)[0]
+        y_eval = self.b_spline_matrix(self.layer_norm(x_pos) * self.layer_norm_scalars)
+        num_interval = self.grid.shape[1] - 1 - 2 * self.k
+
+        def get_grid(num_interval):
+            grid_max = torch.max(torch.abs(x_pos[[0, -1], :].permute(1, 0)), dim=1)[0]
+            h = ((grid_max * 2 )/ num_interval).unsqueeze(-1)
+            grid_max = grid_max.unsqueeze(-1)
+            grid_uniform = (h * torch.arange(num_interval + 1, )[None, :].to(x.device)) - grid_max
+            return grid_uniform
+
+        grid = get_grid(num_interval)
+
+        if mode == 'grid':
+            sample_grid = get_grid(2 * num_interval)
+            x_pos = sample_grid.permute(1, 0)
+            # y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
+            y_eval = self.b_spline_matrix(x_pos)
+
+        self.grid_range[:,0], self.grid_range[:,1] = grid[:,0], grid[:,-1]
+        self.grid_intervals = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.num
+
+        # Determine scalar for new layer_norm and update
+        self.layer_norm_scalars = self.grid_range[:,-1].to(device=self.device)
+
+        self.grid.data = extend_grid(grid, k_extend=self.k)
+        self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
+
     def update_grid_from_samples(self, x, mode='sample'):
         '''
         update grid from samples
@@ -377,7 +409,8 @@ class MatrixKANLayer(nn.Module):
         batch = x.shape[0]
         #x = torch.einsum('ij,k->ikj', x, torch.ones(self.out_dim, ).to(self.device)).reshape(batch, self.size).permute(1, 0)
         x_pos = torch.sort(x, dim=0)[0]
-        y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
+        #y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
+        y_eval = self.b_spline_matrix(x_pos)
         num_interval = self.grid.shape[1] - 1 - 2*self.k
         
         def get_grid(num_interval):
@@ -393,15 +426,11 @@ class MatrixKANLayer(nn.Module):
         if mode == 'grid':
             sample_grid = get_grid(2*num_interval)
             x_pos = sample_grid.permute(1,0)
-            y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
-
-        self.grid_range[:, 0], self.grid_range[:, 1] = grid[:, 0], grid[:, -1]
-        self.grid_intervals = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.num
-        self.layer_norm_shifts = (self.grid_range[:, 0] + self.grid_range[:, -1]) / 2
-        self.layer_norm_scalars = (self.grid_range[:, -1] - self.grid_range[:, 0]) / 2
+            # y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
+            y_eval = self.b_spline_matrix(x_pos)
         
         self.grid.data = extend_grid(grid, k_extend=self.k)
-        self.coef.data = curve2coef(x_pos * self.layer_norm_scalars, y_eval, self.grid, self.k)
+        self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
 
     def initialize_grid_from_parent(self, parent, x, mode='sample'):
         '''
@@ -432,7 +461,8 @@ class MatrixKANLayer(nn.Module):
         batch = x.shape[0]
         
         x_pos = torch.sort(x, dim=0)[0]
-        y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
+        # y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
+        y_eval = self.b_spline_matrix(x_pos)
         num_interval = self.grid.shape[1] - 1 - 2*self.k
         
         def get_grid(num_interval):
@@ -448,13 +478,9 @@ class MatrixKANLayer(nn.Module):
         if mode == 'grid':
             sample_grid = get_grid(2*num_interval)
             x_pos = sample_grid.permute(1,0)
-            y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
-
-        self.grid_range[:, 0], self.grid_range[:, 1] = grid[:, 0], grid[:, -1]
-        self.grid_intervals.data = (self.grid_range.data[:, 1] - self.grid_range.data[:, 0]) / self.num
-        self.layer_norm_shifts.data = (self.grid_range.data[:, 0] + self.grid_range.data[:, -1]) / 2
-        self.layer_norm_scalars.data = (self.grid_range.data[:, -1] - self.grid_range.data[:, 0]) / 2
-
+            # y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
+            y_eval = self.b_spline_matrix(x_pos)
+        
         grid = extend_grid(grid, k_extend=self.k)
         self.grid.data = grid
         self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
