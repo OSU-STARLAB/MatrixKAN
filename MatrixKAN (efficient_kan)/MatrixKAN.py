@@ -22,7 +22,6 @@ class MatrixKANLinear(torch.nn.Module):
         self.device = device
         self.in_features = in_features
         self.out_features = out_features
-        self.grid_range = grid_range
         self.grid_size = grid_size
         self.spline_order = spline_order
 
@@ -38,8 +37,13 @@ class MatrixKANLinear(torch.nn.Module):
         )
         self.grid = grid.to(self.device)
 
-        self.ctrl_pts_num = self.grid_size + self.spline_order
-        self.knots_num = (self.ctrl_pts_num - 1) + self.spline_order + 2
+        self.grid_range = torch.tensor(grid_range, device=device).unsqueeze(0).expand(self.in_features, -1)
+        self.grid_range = self.grid_range.clone().to(dtype=torch.float64)
+        self.grid_intervals = ((self.grid_range[:,1] - self.grid_range[:,0]) / self.grid_size)
+
+        self.layer_norm = torch.nn.Tanh()
+        self.layer_norm_shifts = (self.grid_range[:, 0] + self.grid_range[:, -1]) / 2
+        self.layer_norm_scalars = (self.grid_range[:, -1] - self.grid_range[:, 0]) / 2
 
         # Initialized Trainable Parameters
         self.base_weight = torch.nn.Parameter(torch.tensor(torch.ones(out_features, in_features), dtype=torch.float64))
@@ -105,7 +109,7 @@ class MatrixKANLinear(torch.nn.Module):
         """
         Compute power bases for the given input tensor.
 
-        :Args:
+        Args:
             x (torch.Tensor):                   Input tensor of shape (batch_size, sequence length, in_features).
 
         Returns:
@@ -120,22 +124,27 @@ class MatrixKANLinear(torch.nn.Module):
         """
 
         # Determine applicable grid interval values (lower-bound)
-        x_interval_floor = torch.floor((x - self.grid_range[0]) / self.grid_interval)
-        x_interval_floor = ((x_interval_floor * self.grid_interval) + self.grid_range[0])
+        grid_floors = self.grid[:, 0]
+        grid_floors = grid_floors.unsqueeze(0).expand(x.shape[0], -1)
+        x_interval_floor = torch.floor((x - grid_floors) / self.grid_interval)
+        x_interval_floor = ((x_interval_floor * self.grid_interval) + grid_floors)
 
         # Determine applicable grid interval values (upper-bound)
         x_interval_ceiling = x_interval_floor + self.grid_interval
 
         # Calculate grid indices of interval floor
-        if self.grid.shape[-1] != x_interval_floor.shape[-1]:
-            grid_interval_floor = self.grid == x_interval_floor.unsqueeze(-1)
-        else:
-            grid_interval_floor = self.grid == x_interval_floor
+        x = x.unsqueeze(dim=2)
+        grid = self.grid.unsqueeze(dim=0)
+        grid_interval_floor = (x >= grid[:, :, :-1]) * (x < grid[:, :, 1:])
+        x = x.squeeze(dim=2)
 
         # Calculate index position of the lower knot in the applicable knot span.
         # This is later used to calculate the applicable control points / basis functions.
         grid_interval_floor_indices = torch.nonzero(grid_interval_floor, as_tuple=True)
         grid_interval_floor_indices = grid_interval_floor_indices[-1]
+        grid_interval_floor_indices = torch.clamp(grid_interval_floor_indices, min=self.spline_order, max=self.spline_order + self.grid_size - 1)
+        if grid_interval_floor_indices.size(0) < (x.size(dim=0) * x.size(dim=1)):
+            print("help")                                                                                                 ############### DEBUG ###################
         grid_interval_floor_indices = grid_interval_floor_indices.reshape(x.shape)
 
         # Calculate power bases
@@ -150,11 +159,24 @@ class MatrixKANLinear(torch.nn.Module):
 
         return u, grid_interval_floor_indices
 
-    def b_spline_matrix(self, x: torch.Tensor):
+    def b_splines_matrix(self, power_bases):
         """
-        Compute spline output for the given input tensor.
+        Computes the b-spline output based on the given input tensor.
 
-        :Args:
+        Args:
+            power_bases (torch.Tensor):   Input tensor of shape (batch_size, sequence length, in_features).
+
+        Returns:
+            torch.Tensor:       Power bases tensor of shape (batch_size, sequence length, out_features).
+        """
+
+        return torch.matmul(power_bases, self.basis_matrix)
+
+    def b_splines_matrix_output(self, x: torch.Tensor):
+        """
+        Computes b-spline output based on the given input tensor and spline coefficients.
+
+        Args:
             x (torch.Tensor):   Input tensor of shape (batch_size, sequence length, in_features).
 
         Returns:
@@ -163,6 +185,7 @@ class MatrixKANLinear(torch.nn.Module):
 
         # Calculate power bases
         power_bases, grid_interval_floor_indices = self.power_bases(x)
+        b_splines = self.b_splines_matrix(power_bases)
 
         # Calculate applicable control points
         if self.grid_size == 1:
@@ -197,10 +220,10 @@ class MatrixKANLinear(torch.nn.Module):
             -1)
 
         # Calculate spline outputs
-        prod1 = torch.matmul(power_bases, self.basis_matrix)
-        prod1 = prod1.view(x.size(0), x.size(1), -1).unsqueeze(-2)
-        control_points = control_points.view(prod1.size(0), prod1.size(1), prod1.size(-1), -1)
-        result = torch.matmul(prod1, control_points)
+        # prod1 = torch.matmul(power_bases, self.basis_matrix)
+        b_splines = b_splines.view(x.size(0), x.size(1), -1).unsqueeze(-2)
+        control_points = control_points.view(b_splines.size(0), b_splines.size(1), b_splines.size(-1), -1)
+        result = torch.matmul(b_splines, control_points)
         result = result.squeeze(-2)
 
         return result
@@ -305,20 +328,84 @@ class MatrixKANLinear(torch.nn.Module):
     def forward(self, x: torch.Tensor):
         assert x.size(-1) == self.in_features
 
+        x = self.normalize_input(x)
+
         base_activations = self.base_activation(x)
         base_output = torch.matmul(base_activations, self.base_weight.transpose(-2, -1))
-        spline_output = self.b_spline_matrix(x)
+        spline_output = self.b_splines_matrix_output(x)
         spline_output = torch.sum(spline_output, dim=-2)
         output = base_output + spline_output
 
         return output
-
+    """
     @torch.no_grad()
     def update_grid(self, x: torch.Tensor, margin=0.01):
         assert x.dim() == 2 and x.size(1) == self.in_features
         batch = x.size(0)
 
-        splines = self.b_spline_matrix(x)  # (batch, in, coeff)
+        x_sorted = torch.sort(x, dim=0)[0]
+        # grid_max = torch.max(torch.abs(x_sorted[[0, -1], :].permute(1, 0)), dim=1)[0].unsqueeze(-1)
+        uniform_step = (x_sorted[-1] - x_sorted[0]) / self.grid_size
+        self.update_grid_rescale(uniform_step)
+
+        unreduced_spline_output = self.b_spline_matrix(x)  # (batch, in, out)
+
+        # sort each channel individually to collect data distribution
+        grid_adaptive = x_sorted[
+            torch.linspace(
+                0, batch - 1, self.grid_size + 1, dtype=torch.int64, device=x.device
+            )
+        ]
+
+        uniform_step = (x_sorted[-1] - x_sorted[0] + 2 * margin) / self.grid_size
+        grid_uniform = (
+                torch.arange(
+                    self.grid_size + 1, dtype=torch.float32, device=x.device
+                ).unsqueeze(1)
+                * uniform_step
+                + x_sorted[0]
+                - margin
+        )
+
+        grid = self.grid_eps * grid_uniform + (1 - self.grid_eps) * grid_adaptive
+        grid = torch.concatenate(
+            [
+                grid[:1]
+                - uniform_step
+                * torch.arange(self.spline_order, 0, -1, device=x.device).unsqueeze(1),
+                grid,
+                grid[-1:]
+                + uniform_step
+                * torch.arange(1, self.spline_order + 1, device=x.device).unsqueeze(1),
+            ],
+            dim=0,
+        )
+
+        self.grid_range[:, 0], self.grid_range[:, 1] = grid_uniform.T[:, 0], grid_uniform.T[:, -1]
+        self.grid_intervals.data = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.grid_size
+        self.layer_norm_shifts.data = (self.grid_range.data[:, 0] + self.grid_range.data[:, -1]) / 2
+        self.layer_norm_scalars.data = (self.grid_range.data[:, -1] - self.grid_range.data[:, 0]) / 2
+
+        self.grid.copy_(grid.T)
+        self.spline_weight.data.copy_(self.curve2coeff(x, unreduced_spline_output))
+
+    """
+    @torch.no_grad()
+    def update_grid(self, x: torch.Tensor, margin=0.01):
+        assert x.dim() == 2 and x.size(1) == self.in_features
+        batch = x.size(0)
+
+        """
+        x_sorted = torch.sort(x, dim=0)[0]
+        # grid_max = torch.max(torch.abs(x_sorted[[0, -1], :].permute(1, 0)), dim=1)[0].unsqueeze(-1)
+        grid_range = x_sorted.T[:, [0, -1]]
+        intervals = (x_sorted[-1] - x_sorted[0]) / self.grid_size
+        scalar = (x_sorted[-1] - x_sorted[0]) / 2
+        self.update_grid_rescale(grid_range, intervals, scalar)
+        """
+
+        splines = self.b_splines(x)  # (batch, in, coeff)
+        # splines = self.b_splines_matrix(self.power_bases(x)[0])  # (batch, in, coeff)
         splines = splines.permute(1, 0, 2)  # (in, batch, coeff)
         orig_coeff = self.scaled_spline_weight  # (out, in, coeff)
         orig_coeff = orig_coeff.permute(1, 2, 0)  # (in, coeff, out)
@@ -359,8 +446,31 @@ class MatrixKANLinear(torch.nn.Module):
             dim=0,
         )
 
+        """
+        self.spline_weight.data.copy_(self.curve2coeff(x, unreduced_spline_output))
+        """
+        self.grid_range[:, 0], self.grid_range[:, 1] = grid_uniform.T[:, 0], grid_uniform.T[:, -1]
+        self.grid_intervals.data = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.grid_size
+        self.layer_norm_shifts.data = (self.grid_range.data[:, 0] + self.grid_range.data[:, -1]) / 2
+        self.layer_norm_scalars.data = (self.grid_range.data[:, -1] - self.grid_range.data[:, 0]) / 2
+
+
         self.grid.copy_(grid.T)
         self.spline_weight.data.copy_(self.curve2coeff(x, unreduced_spline_output))
+
+
+    def update_grid_rescale(self, grid_range, intervals, scalar):
+        """
+        Preliminarily updates the grid to allow for the un-normalized x values to be calculated using b_spline_matrix().
+        """
+
+        intervals = intervals.unsqueeze(-1)
+        scalar = scalar.unsqueeze(-1)
+        self.grid = ((self.grid - self.layer_norm_shifts.unsqueeze(-1)) / self.layer_norm_scalars.unsqueeze(-1)) * scalar
+        self.grid_range = grid_range
+        # self.grid_range = ((self.grid_range - self.layer_norm_shifts.unsqueeze(-1)) / self.layer_norm_scalars.unsqueeze(-1)) * scalar
+        self.grid_intervals.data = intervals
+        self.layer_norm_scalars.data = scalar
 
     def regularization_loss(self, regularize_activation=1.0, regularize_entropy=1.0):
         """
@@ -384,6 +494,19 @@ class MatrixKANLinear(torch.nn.Module):
                 + regularize_entropy * regularization_loss_entropy
         )
 
+    def normalize_input(self, x):
+        """
+        Normalizes the input values to fall between the defined range of each spline.
+        """
+
+        x = x - self.layer_norm_shifts
+        x = x / self.layer_norm_scalars
+        x = self.layer_norm(x)
+        x = x * self.layer_norm_scalars
+        x = x + self.layer_norm_shifts
+
+        return x
+
 
 class MatrixKAN(torch.nn.Module):
     def __init__(
@@ -397,13 +520,12 @@ class MatrixKAN(torch.nn.Module):
             scale_spline=1.0,
             base_activation=torch.nn.SiLU,
             grid_eps=0.02,
-            grid_range=[-1, 1],
+            grid_range=[-1, 1]
     ):
         super(MatrixKAN, self).__init__()
         self.grid_size = grid_size
         self.spline_order = spline_order
         self.grid_range = grid_range
-        self.layer_norm = torch.nn.Tanh()
 
         self.layers = torch.nn.ModuleList()
         for in_features, out_features in zip(layers_hidden, layers_hidden[1:]):
@@ -425,10 +547,9 @@ class MatrixKAN(torch.nn.Module):
 
     def forward(self, x: torch.Tensor, update_grid=False):
         for layer in self.layers:
-            x_norm = self.layer_norm(x)           ####### ADD INPUT SCALER TO ACCOUNT FOR DIFFERENT GRID RANGES #####
             if update_grid:
-                layer.update_grid(x_norm)
-            x = layer(x_norm)
+                layer.update_grid(x, margin=0)
+            x = layer(x)
         return x
 
     def regularization_loss(self, regularize_activation=1.0, regularize_entropy=1.0):
