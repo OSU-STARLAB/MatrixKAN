@@ -11,10 +11,10 @@ from torch.utils.data import DataLoader
 from dataset_util import *
 
 # CONFIGS
-EPOCHS = 200
+EPOCHS = 100
 OPTIMIZER = "LBFGS"                 # "Adam", "AdamW" or "LBFGS"
 LEARNING_RATE = 1.
-UPDATE_GRID = True
+UPDATE_GRID = False
 UPDATE_GRID_FREQ = 10               # Number of epochs between grid update
 
 torch.set_default_dtype(torch.float64)
@@ -32,7 +32,7 @@ test_dataset = NewDataSet(dataset["test_input"], dataset["test_label"])
 train_loader = DataLoader(train_dataset, batch_size=100, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=100, shuffle=False)
 
-model = MatrixKAN([2, 5, 1], grid_size=1, spline_order=2, grid_eps=1, device=device)
+model = MatrixKAN([2, 5, 1], grid_size=2, spline_order=2, grid_eps=1, device=device)
 # model = ekan.KAN([2, 5, 1], grid_size=1, spline_order=2) #, grid_eps=1)
 model.to(device)
 

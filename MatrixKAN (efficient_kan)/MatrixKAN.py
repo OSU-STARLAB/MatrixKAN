@@ -1,5 +1,6 @@
 import torch
 import math
+import torch.nn.functional as F
 
 
 class MatrixKANLinear(torch.nn.Module):
@@ -48,12 +49,12 @@ class MatrixKANLinear(torch.nn.Module):
         # Initialized Trainable Parameters
         self.base_weight = torch.nn.Parameter(torch.tensor(torch.ones(out_features, in_features), dtype=torch.float64))
         self.spline_weight = torch.nn.Parameter(
-            torch.tensor(torch.ones(out_features, in_features, grid_size + spline_order), dtype=torch.float64)
+            torch.tensor(torch.ones(in_features, out_features, grid_size + spline_order), dtype=torch.float64)
         )
 
         if enable_standalone_scale_spline:
             self.spline_scaler = torch.nn.Parameter(
-                torch.Tensor(out_features, in_features)
+                torch.Tensor(in_features, out_features)
             )
 
         # Initialize Basis Matrix
@@ -210,7 +211,7 @@ class MatrixKANLinear(torch.nn.Module):
         control_point_indices += control_point_floor_indices
         control_point_indices = control_point_indices.unsqueeze(1).expand(-1, self.out_features, -1, -1)
 
-        control_points = self.spline_weight.unsqueeze(0).expand(
+        control_points = self.spline_weight.view(self.out_features, self.in_features, -1).unsqueeze(0).expand(
             control_point_indices.size(0), -1, -1, -1)
         control_points = torch.gather(control_points, -1, control_point_indices)
         control_points = control_points.view(
@@ -241,10 +242,10 @@ class MatrixKANLinear(torch.nn.Module):
             )
             self.spline_weight.data.copy_(
                 (self.scale_spline if not self.enable_standalone_scale_spline else 1.0)
-                * self.curve2coeff(
+                * self.curve2coeff_orig(
                     self.grid.T[self.spline_order: -self.spline_order],
                     noise,
-                )
+                ).view(self.in_features, self.out_features, -1)
             )
             if self.enable_standalone_scale_spline:
                 # torch.nn.init.constant_(self.spline_scaler, self.scale_spline)
@@ -285,38 +286,6 @@ class MatrixKANLinear(torch.nn.Module):
         )
         return bases.contiguous()
 
-    def curve2coeff(self, x: torch.Tensor, y: torch.Tensor):
-        """
-        Compute the coefficients of the curve that interpolates the given points.
-
-        Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, in_features).
-            y (torch.Tensor): Output tensor of shape (batch_size, in_features, out_features).
-
-        Returns:
-            torch.Tensor: Coefficients tensor of shape (out_features, in_features, grid_size + spline_order).
-        """
-        assert x.dim() == 2 and x.size(1) == self.in_features
-        assert y.size() == (x.size(0), self.in_features, self.out_features)
-
-        A = self.b_splines(x).transpose(
-            0, 1
-        )  # (in_features, batch_size, grid_size + spline_order)
-        B = y.transpose(0, 1)  # (in_features, batch_size, out_features)
-        solution = torch.linalg.lstsq(
-            A.to(self.device), B.to(self.device)
-        ).solution  # (in_features, grid_size + spline_order, out_features)
-        result = solution.permute(
-            2, 0, 1
-        )  # (out_features, in_features, grid_size + spline_order)
-
-        assert result.size() == (
-            self.out_features,
-            self.in_features,
-            self.grid_size + self.spline_order,
-        )
-        return result.contiguous()
-
     @property
     def scaled_spline_weight(self):
         return self.spline_weight * (
@@ -325,6 +294,25 @@ class MatrixKANLinear(torch.nn.Module):
             else 1.0
         )
 
+    # Original
+    """
+    def forward(self, x: torch.Tensor):
+        assert x.size(-1) == self.in_features
+        original_shape = x.shape
+        x = x.reshape(-1, self.in_features)
+
+        base_output = F.linear(self.base_activation(x), self.base_weight)
+        spline_output = F.linear(
+            self.b_splines(x).view(x.size(0), -1),
+            self.scaled_spline_weight.view(self.out_features, -1),
+        )
+        output = base_output + spline_output
+
+        output = output.reshape(*original_shape[:-1], self.out_features)
+        return output
+    """
+
+    # MatrixKAN
     def forward(self, x: torch.Tensor):
         assert x.size(-1) == self.in_features
 
@@ -337,6 +325,8 @@ class MatrixKANLinear(torch.nn.Module):
         output = base_output + spline_output
 
         return output
+
+    # B_spline_matrix() version
     """
     @torch.no_grad()
     def update_grid(self, x: torch.Tensor, margin=0.01):
@@ -388,21 +378,22 @@ class MatrixKANLinear(torch.nn.Module):
 
         self.grid.copy_(grid.T)
         self.spline_weight.data.copy_(self.curve2coeff(x, unreduced_spline_output))
+    """
 
+    # Original version
     """
     @torch.no_grad()
     def update_grid(self, x: torch.Tensor, margin=0.01):
         assert x.dim() == 2 and x.size(1) == self.in_features
         batch = x.size(0)
 
-        """
-        x_sorted = torch.sort(x, dim=0)[0]
+        
+        # x_sorted = torch.sort(x, dim=0)[0]
         # grid_max = torch.max(torch.abs(x_sorted[[0, -1], :].permute(1, 0)), dim=1)[0].unsqueeze(-1)
-        grid_range = x_sorted.T[:, [0, -1]]
-        intervals = (x_sorted[-1] - x_sorted[0]) / self.grid_size
-        scalar = (x_sorted[-1] - x_sorted[0]) / 2
-        self.update_grid_rescale(grid_range, intervals, scalar)
-        """
+        # grid_range = x_sorted.T[:, [0, -1]]
+        # intervals = (x_sorted[-1] - x_sorted[0]) / self.grid_size
+        # scalar = (x_sorted[-1] - x_sorted[0]) / 2
+        # self.update_grid_rescale(grid_range, intervals, scalar)
 
         splines = self.b_splines(x)  # (batch, in, coeff)
         # splines = self.b_splines_matrix(self.power_bases(x)[0])  # (batch, in, coeff)
@@ -445,10 +436,9 @@ class MatrixKANLinear(torch.nn.Module):
             ],
             dim=0,
         )
-
-        """
-        self.spline_weight.data.copy_(self.curve2coeff(x, unreduced_spline_output))
-        """
+        
+        # self.spline_weight.data.copy_(self.curve2coeff(x, unreduced_spline_output))
+        
         self.grid_range[:, 0], self.grid_range[:, 1] = grid_uniform.T[:, 0], grid_uniform.T[:, -1]
         self.grid_intervals.data = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.grid_size
         self.layer_norm_shifts.data = (self.grid_range.data[:, 0] + self.grid_range.data[:, -1]) / 2
@@ -457,6 +447,42 @@ class MatrixKANLinear(torch.nn.Module):
 
         self.grid.copy_(grid.T)
         self.spline_weight.data.copy_(self.curve2coeff(x, unreduced_spline_output))
+    """
+
+    # Pykan version
+
+    @torch.no_grad()
+    def update_grid(self, x: torch.Tensor, margin=0.01):
+        assert x.dim() == 2 and x.size(1) == self.in_features
+
+        batch = x.shape[0]
+        # x = torch.einsum('ij,k->ikj', x, torch.ones(self.out_dim, ).to(self.device)).reshape(batch, self.size).permute(1, 0)
+        x_pos = torch.sort(x, dim=0)[0]
+        y_eval = self.coef2curve(x_pos, self.grid, self.spline_weight, self.spline_order)
+        num_interval = self.grid.shape[1] - 1 - 2 * self.spline_order
+
+        def get_grid(num_interval):
+            ids = [int(batch / num_interval * i) for i in range(num_interval)] + [-1]
+            grid_adaptive = x_pos[ids, :].permute(1, 0)
+            h = (grid_adaptive[:, [-1]] - grid_adaptive[:, [0]]) / num_interval
+            grid_uniform = grid_adaptive[:, [0]] + h * torch.arange(num_interval + 1, )[None, :].to(x.device)
+            grid = self.grid_eps * grid_uniform + (1 - self.grid_eps) * grid_adaptive
+            return grid
+
+        grid = get_grid(num_interval)
+
+        # if mode == 'grid':
+        #     sample_grid = get_grid(2 * num_interval)
+        #     x_pos = sample_grid.permute(1, 0)
+        #     y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
+        
+        self.grid_range[:, 0], self.grid_range[:, 1] = grid[:, 0], grid[:, -1]
+        self.grid_intervals.data = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.grid_size
+        self.layer_norm_shifts.data = (self.grid_range.data[:, 0] + self.grid_range.data[:, -1]) / 2
+        self.layer_norm_scalars.data = (self.grid_range.data[:, -1] - self.grid_range.data[:, 0]) / 2
+
+        self.grid.data = self.extend_grid(grid, k_extend=self.spline_order)
+        self.spline_weight.data = self.curve2coeff(x_pos, y_eval, self.grid, self.spline_order)
 
 
     def update_grid_rescale(self, grid_range, intervals, scalar):
@@ -506,6 +532,125 @@ class MatrixKANLinear(torch.nn.Module):
         x = x + self.layer_norm_shifts
 
         return x
+
+    def coef2curve(self, x_eval, grid, coef, k, device="cpu"):
+        '''
+        converting B-spline coefficients to B-spline curves. Evaluate x on B-spline curves (summing up B_batch results over B-spline basis).
+
+        Args:
+        -----
+            x_eval : 2D torch.tensor
+                shape (batch, in_dim)
+            grid : 2D torch.tensor
+                shape (in_dim, G+2k). G: the number of grid intervals; k: spline order.
+            coef : 3D torch.tensor
+                shape (in_dim, out_dim, G+k)
+            k : int
+                the piecewise polynomial order of splines.
+            device : str
+                devicde
+
+        Returns:
+        --------
+            y_eval : 3D torch.tensor
+                shape (number of samples, in_dim, out_dim)
+
+        '''
+
+        b_splines = self.b_splines(x_eval)
+        y_eval = torch.einsum('ijk,jlk->ijl', b_splines, coef.to(b_splines.device))
+
+        return y_eval
+
+    # Original version
+    def curve2coeff_orig(self, x: torch.Tensor, y: torch.Tensor):
+        """
+        Compute the coefficients of the curve that interpolates the given points.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, in_features).
+            y (torch.Tensor): Output tensor of shape (batch_size, in_features, out_features).
+
+        Returns:
+            torch.Tensor: Coefficients tensor of shape (out_features, in_features, grid_size + spline_order).
+        """
+        assert x.dim() == 2 and x.size(1) == self.in_features
+        assert y.size() == (x.size(0), self.in_features, self.out_features)
+
+        A = self.b_splines(x).transpose(
+            0, 1
+        )  # (in_features, batch_size, grid_size + spline_order)
+        B = y.transpose(0, 1)  # (in_features, batch_size, out_features)
+        solution = torch.linalg.lstsq(
+            A.to(self.device), B.to(self.device)
+        ).solution  # (in_features, grid_size + spline_order, out_features)
+        result = solution.permute(
+            2, 0, 1
+        )  # (out_features, in_features, grid_size + spline_order)
+
+        assert result.size() == (
+            self.out_features,
+            self.in_features,
+            self.grid_size + self.spline_order,
+        )
+        return result.contiguous()
+
+    # pykan version
+    def curve2coeff(self, x_eval, y_eval, grid, k, lamb=1e-8):
+        '''
+        converting B-spline curves to B-spline coefficients using least squares.
+
+        Args:
+        -----
+            x_eval : 2D torch.tensor
+                shape (in_dim, out_dim, number of samples)
+            y_eval : 2D torch.tensor
+                shape (in_dim, out_dim, number of samples)
+            grid : 2D torch.tensor
+                shape (in_dim, grid+2*k)
+            k : int
+                spline order
+            lamb : float
+                regularized least square lambda
+
+        Returns:
+        --------
+            coef : 3D torch.tensor
+                shape (in_dim, out_dim, G+k)
+        '''
+        batch = x_eval.shape[0]
+        in_dim = x_eval.shape[1]
+        out_dim = y_eval.shape[2]
+        n_coef = grid.shape[1] - k - 1
+        mat = self.b_splines(x_eval)
+        mat = mat.permute(1, 0, 2)[:, None, :, :].expand(in_dim, out_dim, batch, n_coef)
+        y_eval = y_eval.permute(1, 2, 0).unsqueeze(dim=3)
+        device = mat.device
+
+        # coef = torch.linalg.lstsq(mat, y_eval,
+        # driver='gelsy' if device == 'cpu' else 'gels').solution[:,:,:,0]
+
+        XtX = torch.einsum('ijmn,ijnp->ijmp', mat.permute(0, 1, 3, 2), mat)
+        Xty = torch.einsum('ijmn,ijnp->ijmp', mat.permute(0, 1, 3, 2), y_eval)
+        n1, n2, n = XtX.shape[0], XtX.shape[1], XtX.shape[2]
+        identity = torch.eye(n, n)[None, None, :, :].expand(n1, n2, n, n).to(device)
+        A = XtX + lamb * identity
+        B = Xty
+        coef = (A.pinverse() @ B)[:, :, :, 0]
+
+        return coef
+
+    def extend_grid(self, grid, k_extend=0):
+        '''
+        extend grid
+        '''
+        h = (grid[:, [-1]] - grid[:, [0]]) / (grid.shape[1] - 1)
+
+        for i in range(k_extend):
+            grid = torch.cat([grid[:, [0]] - h, grid], dim=1)
+            grid = torch.cat([grid, grid[:, [-1]] + h], dim=1)
+
+        return grid
 
 
 class MatrixKAN(torch.nn.Module):
