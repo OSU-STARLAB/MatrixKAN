@@ -125,6 +125,10 @@ class MatrixKANLinear(torch.nn.Module):
             (torch.Tensor):                     Indices of lower bound of applicable knot interval in self.grid.
         """
 
+        # Revise out-of-bounds values to bottom value in knot vector (resulting in 0 spline output)
+        out_of_bounds = (x <= self.grid_range[:, 0]) | (x >= self.grid_range[:, 1])
+        x = torch.where(out_of_bounds, self.grid.unsqueeze(0)[:,:,0], x)
+
         # Determine applicable grid interval values (lower-bound)
         grid_floors = self.grid[:, 0]
         grid_floors = grid_floors.unsqueeze(0).expand(x.shape[0], -1)
@@ -142,9 +146,16 @@ class MatrixKANLinear(torch.nn.Module):
 
         # Calculate index position of the lower knot in the applicable knot span.
         # This is later used to calculate the applicable control points / basis functions.
+        # out_of_bounds = torch.all(~grid_interval_floor, dim=-1, keepdim=True).squeeze(-1)
+        # out_of_bounds_replacement = [True]
+        # for _ in range(grid_interval_floor.size(-1) - 1):
+        #     out_of_bounds_replacement.append(False)
+        # out_of_bounds_replacement = torch.tensor(out_of_bounds_replacement)
+        # grid_interval_floor[out_of_bounds] = out_of_bounds_replacement
+
         grid_interval_floor_indices = torch.nonzero(grid_interval_floor, as_tuple=True)
         grid_interval_floor_indices = grid_interval_floor_indices[-1]
-        grid_interval_floor_indices = torch.clamp(grid_interval_floor_indices, min=self.spline_order, max=self.spline_order + self.grid_size - 1)
+        # grid_interval_floor_indices = torch.clamp(grid_interval_floor_indices, min=self.spline_order, max=self.spline_order + self.grid_size - 1)
         if grid_interval_floor_indices.size(0) < (x.size(dim=0) * x.size(dim=1)):
             print("help")                                                                                                 ############### DEBUG ###################
         grid_interval_floor_indices = grid_interval_floor_indices.reshape(x.shape)
@@ -199,6 +210,7 @@ class MatrixKANLinear(torch.nn.Module):
             # If grid_size > 1, multiple curves defined for spline / calculate applicable control points per input
             # For knot interval [u(i), u(i+1)), applicable control points are P(i-p) ... P(i)
             control_point_floor_indices = (grid_interval_floor_indices - self.spline_order)
+            control_point_floor_indices = torch.clamp(control_point_floor_indices, min=0)
 
         control_point_floor_indices = control_point_floor_indices.unsqueeze(-1)
 
@@ -314,11 +326,12 @@ class MatrixKANLinear(torch.nn.Module):
     """
 
     # MatrixKAN
-    def forward(self, x: torch.Tensor, mask):
+    def forward(self, x: torch.Tensor):
         assert x.size(-1) == self.in_features
 
         # x = self.normalize_input(x)
-        x, mask = self.mask_input(x, mask)
+        # x, mask = self.mask_input(x, mask)
+        x = self.mask_input(x)
 
         base_activations = self.base_activation(x)
         base_output = torch.matmul(base_activations, self.base_weight.transpose(-2, -1))
@@ -328,7 +341,7 @@ class MatrixKANLinear(torch.nn.Module):
             spline_output = torch.sum(spline_output, dim=-2)
         output = base_output + spline_output
 
-        return output, mask
+        return output
 
     # B_spline_matrix() version
     """
@@ -543,6 +556,7 @@ class MatrixKANLinear(torch.nn.Module):
         """
 
         # Removing inputs with out-of-range values
+        """
         mask = torch.all((x > self.grid_range[:, 0]) & (x < self.grid_range[:, 1]), dim=-1, keepdim=True).squeeze(-1)
         x_masked = x[mask]
         if prior_mask is not None:
@@ -551,7 +565,12 @@ class MatrixKANLinear(torch.nn.Module):
             new_mask[prior_mask_true] = mask
             mask = new_mask
         return x_masked, mask
+        """
 
+        # Update inputs with out-of-range values to 0 (like recursive b-spline algorithm)
+        mask = (x <= self.grid_range[:, 0]) | (x >= self.grid_range[:, 1])
+        x_masked = torch.where(mask, torch.tensor(0), x)
+        return x_masked
 
 
     def coef2curve(self, x_eval, grid, coef, k, device="cpu"):
@@ -712,12 +731,11 @@ class MatrixKAN(torch.nn.Module):
             )
 
     def forward(self, x: torch.Tensor, update_grid=False):
-        mask = None
         for layer in self.layers:
             if update_grid:
                 layer.update_grid(x, margin=0)
-            x, mask = layer(x, mask)
-        return x, mask
+            x = layer(x)
+        return x
 
     def regularization_loss(self, regularize_activation=1.0, regularize_entropy=1.0):
         return sum(

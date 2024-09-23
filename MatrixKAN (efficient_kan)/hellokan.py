@@ -11,10 +11,10 @@ from torch.utils.data import DataLoader
 from dataset_util import *
 
 # CONFIGS
-EPOCHS = 10000
-OPTIMIZER = "AdamW"                 # "Adam", "AdamW" or "LBFGS"
+EPOCHS = 1000
+OPTIMIZER = "LBFGS"                 # "Adam", "AdamW" or "LBFGS"
 LEARNING_RATE = 1.
-UPDATE_GRID = True
+UPDATE_GRID = False
 UPDATE_GRID_FREQ = 10               # Number of epochs between grid update
 
 torch.set_default_dtype(torch.float64)
@@ -24,7 +24,7 @@ device = torch.device('cpu')
 
 # create dataset f(x,y) = exp(sin(pi*x)+y^2)
 f = lambda x: torch.exp(torch.sin(torch.pi*x[:,[0]]) + x[:,[1]]**2)
-dataset = create_dataset(f, n_var=2, device=device) #, train_num=6, test_num=6)
+dataset = create_dataset(f, n_var=2, device=device, train_num=6, test_num=6)
 
 train_dataset = NewDataSet(dataset["train_input"], dataset["train_label"])
 test_dataset = NewDataSet(dataset["test_input"], dataset["test_label"])
@@ -44,8 +44,8 @@ elif OPTIMIZER == "LBFGS":
     def closure():
         global train_loss, reg_
         optimizer.zero_grad()
-        pred, mask = model(dataset['train_input'][train_id], update_grid_now)
-        train_loss = loss_fn(pred, dataset['train_label'][train_id][mask])
+        pred = model(dataset['train_input'][train_id], update_grid_now)
+        train_loss = loss_fn(pred, dataset['train_label'][train_id])
         train_loss = torch.nan_to_num(train_loss)
         reg_ = torch.tensor(0.)
         objective = train_loss
@@ -80,8 +80,8 @@ for _ in pbar:
     if OPTIMIZER == "LBFGS":
         optimizer.step(closure)
     else:
-        pred, mask = model(dataset['train_input'][train_id], update_grid=update_grid_now)
-        loss = train_loss = loss_fn(pred, dataset['train_label'][train_id][mask])
+        pred = model(dataset['train_input'][train_id], update_grid=update_grid_now)
+        loss = train_loss = loss_fn(pred, dataset['train_label'][train_id])
         reg_ = torch.tensor(0.)
         optimizer.zero_grad()
         loss.backward()
@@ -89,8 +89,8 @@ for _ in pbar:
 
     # Validate
     model.eval()
-    pred, mask = model(dataset['test_input'][test_id])
-    test_loss = loss_fn_eval(pred, dataset['test_label'][test_id][mask].to(device))
+    pred = model(dataset['test_input'][test_id])
+    test_loss = loss_fn_eval(pred, dataset['test_label'][test_id].to(device))
 
     pbar.set_description("| train_loss: %.2e | test_loss: %.2e | reg: %.2e | " % (
     torch.sqrt(train_loss).cpu().detach().numpy(), torch.sqrt(test_loss).cpu().detach().numpy(),
