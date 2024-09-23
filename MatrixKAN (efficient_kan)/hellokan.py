@@ -11,10 +11,10 @@ from torch.utils.data import DataLoader
 from dataset_util import *
 
 # CONFIGS
-EPOCHS = 100
-OPTIMIZER = "LBFGS"                 # "Adam", "AdamW" or "LBFGS"
+EPOCHS = 10000
+OPTIMIZER = "AdamW"                 # "Adam", "AdamW" or "LBFGS"
 LEARNING_RATE = 1.
-UPDATE_GRID = False
+UPDATE_GRID = True
 UPDATE_GRID_FREQ = 10               # Number of epochs between grid update
 
 torch.set_default_dtype(torch.float64)
@@ -44,8 +44,9 @@ elif OPTIMIZER == "LBFGS":
     def closure():
         global train_loss, reg_
         optimizer.zero_grad()
-        pred = model(dataset['train_input'][train_id], update_grid_now)
-        train_loss = loss_fn(pred, dataset['train_label'][train_id])
+        pred, mask = model(dataset['train_input'][train_id], update_grid_now)
+        train_loss = loss_fn(pred, dataset['train_label'][train_id][mask])
+        train_loss = torch.nan_to_num(train_loss)
         reg_ = torch.tensor(0.)
         objective = train_loss
         objective.backward()
@@ -79,8 +80,8 @@ for _ in pbar:
     if OPTIMIZER == "LBFGS":
         optimizer.step(closure)
     else:
-        pred = model(dataset['train_input'][train_id], update_grid=update_grid_now)
-        loss = train_loss = loss_fn(pred, dataset['train_label'][train_id])
+        pred, mask = model(dataset['train_input'][train_id], update_grid=update_grid_now)
+        loss = train_loss = loss_fn(pred, dataset['train_label'][train_id][mask])
         reg_ = torch.tensor(0.)
         optimizer.zero_grad()
         loss.backward()
@@ -88,10 +89,8 @@ for _ in pbar:
 
     # Validate
     model.eval()
-    with torch.no_grad():
-        for inputs, labels in test_loader:
-            pred = model(inputs)
-            test_loss = loss_fn_eval(pred, labels.to(device))
+    pred, mask = model(dataset['test_input'][test_id])
+    test_loss = loss_fn_eval(pred, dataset['test_label'][test_id][mask].to(device))
 
     pbar.set_description("| train_loss: %.2e | test_loss: %.2e | reg: %.2e | " % (
     torch.sqrt(train_loss).cpu().detach().numpy(), torch.sqrt(test_loss).cpu().detach().numpy(),

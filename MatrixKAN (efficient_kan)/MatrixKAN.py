@@ -42,7 +42,8 @@ class MatrixKANLinear(torch.nn.Module):
         self.grid_range = self.grid_range.clone().to(dtype=torch.float64)
         self.grid_intervals = ((self.grid_range[:,1] - self.grid_range[:,0]) / self.grid_size)
 
-        self.layer_norm = torch.nn.Tanh()
+        # self.layer_norm = torch.nn.Tanh()
+        self.layer_norm = torch.nn.Hardtanh()
         self.layer_norm_shifts = (self.grid_range[:, 0] + self.grid_range[:, -1]) / 2
         self.layer_norm_scalars = (self.grid_range[:, -1] - self.grid_range[:, 0]) / 2
 
@@ -313,18 +314,21 @@ class MatrixKANLinear(torch.nn.Module):
     """
 
     # MatrixKAN
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, mask):
         assert x.size(-1) == self.in_features
 
-        x = self.normalize_input(x)
+        # x = self.normalize_input(x)
+        x, mask = self.mask_input(x, mask)
 
         base_activations = self.base_activation(x)
         base_output = torch.matmul(base_activations, self.base_weight.transpose(-2, -1))
-        spline_output = self.b_splines_matrix_output(x)
-        spline_output = torch.sum(spline_output, dim=-2)
+        spline_output = torch.tensor([])
+        if x.size(0) != 0:
+            spline_output = self.b_splines_matrix_output(x)
+            spline_output = torch.sum(spline_output, dim=-2)
         output = base_output + spline_output
 
-        return output
+        return output, mask
 
     # B_spline_matrix() version
     """
@@ -533,6 +537,23 @@ class MatrixKANLinear(torch.nn.Module):
 
         return x
 
+    def mask_input(self, x, prior_mask=None):
+        """
+        Masks input values that are outside the defined range of each spline.
+        """
+
+        # Removing inputs with out-of-range values
+        mask = torch.all((x > self.grid_range[:, 0]) & (x < self.grid_range[:, 1]), dim=-1, keepdim=True).squeeze(-1)
+        x_masked = x[mask]
+        if prior_mask is not None:
+            prior_mask_true = prior_mask.nonzero(as_tuple=True)[0]
+            new_mask = prior_mask.clone()
+            new_mask[prior_mask_true] = mask
+            mask = new_mask
+        return x_masked, mask
+
+
+
     def coef2curve(self, x_eval, grid, coef, k, device="cpu"):
         '''
         converting B-spline coefficients to B-spline curves. Evaluate x on B-spline curves (summing up B_batch results over B-spline basis).
@@ -691,11 +712,12 @@ class MatrixKAN(torch.nn.Module):
             )
 
     def forward(self, x: torch.Tensor, update_grid=False):
+        mask = None
         for layer in self.layers:
             if update_grid:
                 layer.update_grid(x, margin=0)
-            x = layer(x)
-        return x
+            x, mask = layer(x, mask)
+        return x, mask
 
     def regularization_loss(self, regularize_activation=1.0, regularize_entropy=1.0):
         return sum(
