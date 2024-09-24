@@ -24,7 +24,7 @@ device = torch.device('cpu')
 
 # create dataset f(x,y) = exp(sin(pi*x)+y^2)
 f = lambda x: torch.exp(torch.sin(torch.pi*x[:,[0]]) + x[:,[1]]**2)
-dataset = create_dataset(f, n_var=2, device=device, train_num=6, test_num=6)
+dataset = create_dataset(f, n_var=2, device=device) #, train_num=6, test_num=6)
 
 train_dataset = NewDataSet(dataset["train_input"], dataset["train_label"])
 test_dataset = NewDataSet(dataset["test_input"], dataset["test_label"])
@@ -32,8 +32,8 @@ test_dataset = NewDataSet(dataset["test_input"], dataset["test_label"])
 train_loader = DataLoader(train_dataset, batch_size=100, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=100, shuffle=False)
 
-model = MatrixKAN([2, 5, 1], grid_size=2, spline_order=2, grid_eps=1, device=device)
-# model = ekan.KAN([2, 5, 1], grid_size=1, spline_order=2) #, grid_eps=1)
+model = MatrixKAN([2, 5, 1], grid_size=3, spline_order=2, grid_eps=1, device=device)
+# model = ekan.KAN([2, 5, 1], grid_size=3, spline_order=2, grid_eps=1)
 model.to(device)
 
 # DEFINE OPTIMIZER

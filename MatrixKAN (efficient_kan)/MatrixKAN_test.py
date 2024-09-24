@@ -53,6 +53,10 @@ class MatrixKANLinear(torch.nn.Module):
             torch.tensor(torch.ones(in_features, out_features, grid_size + spline_order), dtype=torch.float64)
         )
 
+        # Initialize weights (Ones)
+        self.base_weight = torch.nn.Parameter(torch.ones(size=self.base_weight.shape))
+        self.spline_weight = torch.nn.Parameter(torch.ones(size=self.spline_weight.shape))
+
         if enable_standalone_scale_spline:
             self.spline_scaler = torch.nn.Parameter(
                 torch.Tensor(in_features, out_features)
@@ -68,7 +72,7 @@ class MatrixKANLinear(torch.nn.Module):
         self.base_activation = base_activation()
         self.grid_eps = grid_eps
 
-        self.reset_parameters()
+        # self.reset_parameters()
 
     def basis_matrix(self):
         """
