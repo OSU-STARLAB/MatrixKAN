@@ -2,8 +2,6 @@ import torch
 import math
 import torch.nn.functional as F
 
-from Reference.basis_matrix import spline_order
-
 
 class MatrixKANLinear(torch.nn.Module):
     def __init__(
@@ -146,7 +144,7 @@ class MatrixKANLinear(torch.nn.Module):
 
         # Calculate power bases
         u1_numerator = x - x_interval_floor
-        u1_denominator = x_interval_ceiling - x_interval_floor
+        u1_denominator = x_interval_ceiling - x_interval_floor  ############# REPLACE WITH GRID_INTERVALS ##########
         u1 = (u1_numerator / u1_denominator).unsqueeze(-1)
         ones = torch.ones(u1.shape, dtype=x.dtype, device=self.device)
         u = torch.cat((ones, u1), -1)
@@ -156,7 +154,7 @@ class MatrixKANLinear(torch.nn.Module):
 
         return u
 
-    def b_splines_matrix(self, power_bases, grid_intervals, x):
+    def b_splines_matrix(self, power_bases):
         """
         Computes the b-spline output based on the given input tensor.
 
@@ -167,39 +165,25 @@ class MatrixKANLinear(torch.nn.Module):
             torch.Tensor:       Power bases tensor of shape (batch_size, sequence length, out_features).
         """
 
-        basis_matrices = torch.nn.functional.pad(self.basis_matrix, (self.spline_order + self.grid_size, self.spline_order + self.grid_size),
-                                                 mode='constant', value=0)
-        basis_matrices = basis_matrices.unsqueeze(0).unsqueeze(0)
-        basis_matrices = basis_matrices.expand(power_bases.size(0), self.in_features, -1, -1)
 
-        out_of_bounds_interval = torch.zeros((grid_intervals.size(0), grid_intervals.size(1), 1), dtype=torch.bool).to(self.device)
-        grid_intervals = torch.cat((out_of_bounds_interval, grid_intervals), -1)
 
-        basis_func_floor_indices = torch.argmax(grid_intervals.to(torch.int), dim=-1, keepdim=True)
-        basis_func_floor_indices = (2 * self.spline_order) + self.grid_size - basis_func_floor_indices + 1
-        basis_func_indices = torch.arange(0, self.spline_order + self.grid_size, 1).unsqueeze(0).unsqueeze(0).to(self.device)
-        basis_func_indices = basis_func_indices.expand(
-            basis_matrices.size(0),
-            basis_matrices.size(1),
-            basis_matrices.size(2),
-            -1
-        )
-        basis_func_indices = basis_func_indices.clone()
-        basis_func_indices += basis_func_floor_indices.unsqueeze(-2).expand(-1, -1, basis_func_indices.size(-2), -1)
-        # basis_func_indices = basis_func_indices.unsqueeze(1).expand(-1, self.out_features, -1, -1)
+        # Calculate index position of the lower knot in the applicable knot span.
+        # This is later used to calculate the applicable control points / basis functions.
+        # out_of_bounds = torch.all(~grid_interval_floor, dim=-1, keepdim=True).squeeze(-1)
+        # out_of_bounds_replacement = [True]
+        # for _ in range(grid_interval_floor.size(-1) - 1):
+        #     out_of_bounds_replacement.append(False)
+        # out_of_bounds_replacement = torch.tensor(out_of_bounds_replacement)
+        # grid_interval_floor[out_of_bounds] = out_of_bounds_replacement
 
-        basis_matrices = torch.gather(basis_matrices, -1, basis_func_indices)
-        # basis_matrices = basis_matrices.view(
-        #     basis_func_indices.size(0),
-        #     basis_func_indices.size(1),
-        #     basis_func_indices.size(2),
-        #     -1)
+        # grid_interval_floor_indices = torch.nonzero(grid_intervals, as_tuple=True)
+        # grid_interval_floor_indices = grid_interval_floor_indices[-1]
+        # grid_interval_floor_indices = torch.clamp(grid_interval_floor_indices, min=self.spline_order, max=self.spline_order + self.grid_size - 1)
+        # if grid_interval_floor_indices.size(0) < (x.size(dim=0) * x.size(dim=1)):
+        #     print("help")  ############### DEBUG ###################
+        # grid_interval_floor_indices = grid_interval_floor_indices.reshape(x.shape)
 
-        power_bases = power_bases.unsqueeze(-2)
-        result = torch.matmul(power_bases, basis_matrices)
-        result = result.squeeze(-2)
-
-        return result
+        return torch.matmul(power_bases, self.basis_matrix)
 
     def b_splines_matrix_output(self, x: torch.Tensor):
         """
@@ -224,7 +208,7 @@ class MatrixKANLinear(torch.nn.Module):
         # x = x.squeeze(dim=2)
 
         # Calculate basis function outputs
-        basis_func_outputs = self.b_splines_matrix(power_bases, grid_intervals, x)
+        basis_func_outputs = self.b_splines_matrix(power_bases)
 
         """
         # Calculate applicable control points
@@ -242,7 +226,8 @@ class MatrixKANLinear(torch.nn.Module):
             # For knot interval [u(i), u(i+1)), applicable control points are P(i-p) ... P(i)
             control_point_floor_indices = (grid_interval_floor_indices - self.spline_order)
             control_point_floor_indices = torch.clamp(control_point_floor_indices, min=0)
-        
+        """
+
         # Calculate applicable control points
         control_point_floor_indices = torch.argmax(grid_intervals.to(torch.int), dim=-1, keepdim=True)
         # control_point_floor_indices -= self.spline_order
@@ -268,15 +253,13 @@ class MatrixKANLinear(torch.nn.Module):
             control_point_indices.size(1),
             control_point_indices.size(2),
             -1)
-        """
 
         # Calculate spline outputs
         # prod1 = torch.matmul(power_bases, self.basis_matrix)
-        # basis_func_outputs = basis_func_outputs.view(x.size(0), x.size(1), -1).unsqueeze(-2)
-        # control_points = control_points.view(basis_func_outputs.size(0), basis_func_outputs.size(1), basis_func_outputs.size(-1), -1)
-        # result = torch.matmul(basis_func_outputs, self.spline_weight)
-        # result = result.squeeze(-2)
-        result = torch.einsum('ijk,jlk->ijl', basis_func_outputs, self.spline_weight)
+        basis_func_outputs = basis_func_outputs.view(x.size(0), x.size(1), -1).unsqueeze(-2)
+        control_points = control_points.view(basis_func_outputs.size(0), basis_func_outputs.size(1), basis_func_outputs.size(-1), -1)
+        result = torch.matmul(basis_func_outputs, control_points)
+        result = result.squeeze(-2)
 
         return result
 

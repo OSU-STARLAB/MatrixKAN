@@ -6,8 +6,8 @@ import torch.optim as optim
 
 torch.set_default_dtype(torch.float64)
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# device = torch.device('cpu')
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cpu')
 
 # create KAN models
 model_matrix = MatrixKAN([2, 5, 1], grid_size=2, spline_order=2, grid_range=[-1, 1], device=device)

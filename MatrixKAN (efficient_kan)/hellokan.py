@@ -11,16 +11,16 @@ from torch.utils.data import DataLoader
 from dataset_util import *
 
 # CONFIGS
-EPOCHS = 1000
+EPOCHS = 100
 OPTIMIZER = "LBFGS"                 # "Adam", "AdamW" or "LBFGS"
 LEARNING_RATE = 1.
-UPDATE_GRID = False
+UPDATE_GRID = True
 UPDATE_GRID_FREQ = 10               # Number of epochs between grid update
 
 torch.set_default_dtype(torch.float64)
 
-# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device = torch.device('cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# device = torch.device('cpu')
 
 # create dataset f(x,y) = exp(sin(pi*x)+y^2)
 f = lambda x: torch.exp(torch.sin(torch.pi*x[:,[0]]) + x[:,[1]]**2)
