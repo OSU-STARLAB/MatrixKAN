@@ -14,7 +14,7 @@ from dataset_util import *
 EPOCHS = 100
 OPTIMIZER = "LBFGS"                 # "Adam", "AdamW" or "LBFGS"
 LEARNING_RATE = 1.
-UPDATE_GRID = True
+UPDATE_GRID = False
 UPDATE_GRID_FREQ = 10               # Number of epochs between grid update
 
 torch.set_default_dtype(torch.float64)
