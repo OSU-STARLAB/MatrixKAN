@@ -4,7 +4,7 @@ base_fun_name: silu
 ckpt_path: ./model
 device: cpu
 grid: 3
-grid_eps: 1
+grid_eps: 0.02
 grid_range:
 - -1
 - 1

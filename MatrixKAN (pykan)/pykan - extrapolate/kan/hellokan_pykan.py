@@ -1,6 +1,5 @@
-# from kan.MultKAN import *
+from MultKAN_test import *
 # from MatrixKAN import *
-from MatrixKAN_test import *
 from kan.utils import create_dataset
 from kan.utils import ex_round
 
@@ -11,8 +10,8 @@ device = torch.device('cpu')
 print(device)
 
 # create a KAN: 2D inputs, 1D output, and 5 hidden neurons. cubic spline (k=3), 5 grid intervals (grid=5).
-model = MatrixKAN(width=[2,5,1], grid=1, k=5, seed=42, device=device, grid_eps=1, symbolic_enabled=False)
-# model = MultKAN(width=[2,5,1], grid=3, k=2, seed=42, device=device, grid_eps=1)
+# model = MatrixKAN(width=[2,5,1], grid=3, k=2, seed=42, device=device, grid_eps=1)
+model = MultKAN(width=[2,5,1], grid=1, k=5, seed=42, device=device, grid_eps=1, symbolic_enabled=False)
 
 # create dataset f(x,y) = exp(sin(pi*x)+y^2)
 f = lambda x: torch.exp(torch.sin(torch.pi*x[:,[0]]) + x[:,[1]]**2)

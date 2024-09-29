@@ -236,11 +236,9 @@ class MatrixKANLayer(nn.Module):
 
         out_of_bounds_interval = torch.zeros((grid_intervals.size(0), grid_intervals.size(1), 1), dtype=torch.bool).to(self.device)
         grid_intervals = torch.cat((out_of_bounds_interval, grid_intervals), -1)
-        # out_of_bounds = torch.all(~grid_intervals, dim=-1, keepdim=True)
 
-        basis_func_floor_indices = torch.argmax(grid_intervals.to(torch.int), dim=-1, keepdim=True) # + 1
-        # basis_func_floor_indices[out_of_bounds] = torch.tensor(0, device=self.device)
-        basis_func_floor_indices = (2 * self.k) + self.num + 1 - basis_func_floor_indices
+        basis_func_floor_indices = torch.argmax(grid_intervals.to(torch.int), dim=-1, keepdim=True)
+        basis_func_floor_indices = (2 * self.k) + self.num - basis_func_floor_indices + 1
         basis_func_indices = torch.arange(0, self.k + self.num, 1).unsqueeze(0).unsqueeze(0).to(self.device)
         basis_func_indices = basis_func_indices.expand(
             basis_matrices.size(0),
@@ -375,7 +373,6 @@ class MatrixKANLayer(nn.Module):
         
         self.grid.data = extend_grid(grid, k_extend=self.k)
         self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
-        # self.coef.data = self.curve2coef(x_pos, y_eval, self.grid, self.k)
 
     def initialize_grid_from_parent(self, parent, x, mode='sample'):
         '''
@@ -407,7 +404,6 @@ class MatrixKANLayer(nn.Module):
         
         x_pos = torch.sort(x, dim=0)[0]
         y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
-        # y_eval = self.b_splines_matrix(x_pos)
         num_interval = self.grid.shape[1] - 1 - 2*self.k
         
         def get_grid(num_interval):
@@ -424,7 +420,6 @@ class MatrixKANLayer(nn.Module):
             sample_grid = get_grid(2*num_interval)
             x_pos = sample_grid.permute(1,0)
             y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
-            # y_eval = self.b_splines_matrix(x_pos)
 
         self.grid_range[:, 0], self.grid_range[:, 1] = grid[:, 0], grid[:, -1]
         self.grid_intervals.data = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.num
@@ -432,7 +427,6 @@ class MatrixKANLayer(nn.Module):
         grid = extend_grid(grid, k_extend=self.k)
         self.grid.data = grid
         self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
-        # self.coef.data = self.curve2coef(x_pos, y_eval, self.grid, self.k)
 
     def get_subset(self, in_id, out_id):
         '''
@@ -505,47 +499,3 @@ class MatrixKANLayer(nn.Module):
             swap_(self.scale_sp.data, i1, i2, mode=mode)
             swap_(self.mask.data, i1, i2, mode=mode)
 
-    def curve2coef(self, x_eval, y_eval, grid, k, lamb=1e-8):
-        '''
-        converting B-spline curves to B-spline coefficients using least squares.
-
-        Args:
-        -----
-            x_eval : 2D torch.tensor
-                shape (in_dim, out_dim, number of samples)
-            y_eval : 2D torch.tensor
-                shape (in_dim, out_dim, number of samples)
-            grid : 2D torch.tensor
-                shape (in_dim, grid+2*k)
-            k : int
-                spline order
-            lamb : float
-                regularized least square lambda
-
-        Returns:
-        --------
-            coef : 3D torch.tensor
-                shape (in_dim, out_dim, G+k)
-        '''
-        batch = x_eval.shape[0]
-        in_dim = x_eval.shape[1]
-        out_dim = y_eval.shape[2]
-        n_coef = grid.shape[1] - k - 1
-        # mat = B_batch(x_eval, grid, k)
-        mat = self.b_splines_matrix(x_eval)
-        mat = mat.permute(1, 0, 2)[:, None, :, :].expand(in_dim, out_dim, batch, n_coef)
-        y_eval = y_eval.permute(1, 2, 0).unsqueeze(dim=3)
-        device = mat.device
-
-        # coef = torch.linalg.lstsq(mat, y_eval,
-        # driver='gelsy' if device == 'cpu' else 'gels').solution[:,:,:,0]
-
-        XtX = torch.einsum('ijmn,ijnp->ijmp', mat.permute(0, 1, 3, 2), mat)
-        Xty = torch.einsum('ijmn,ijnp->ijmp', mat.permute(0, 1, 3, 2), y_eval)
-        n1, n2, n = XtX.shape[0], XtX.shape[1], XtX.shape[2]
-        identity = torch.eye(n, n)[None, None, :, :].expand(n1, n2, n, n).to(device)
-        A = XtX + lamb * identity
-        B = Xty
-        coef = (A.pinverse() @ B)[:, :, :, 0]
-
-        return coef

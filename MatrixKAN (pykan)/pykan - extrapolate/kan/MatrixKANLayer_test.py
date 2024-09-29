@@ -123,6 +123,12 @@ class MatrixKANLayer(nn.Module):
 
         self.basis_matrix = self.calculate_basis_matrix()
         self.basis_matrix = torch.nn.Parameter(self.basis_matrix).requires_grad_(False)
+
+        # Flatten parameters
+        self.coef.data = (self.coef * 0) + 1
+        self.mask.data = (self.mask * 0) + 1
+        self.scale_base.data = (self.scale_base * 0) + 1
+        self.scale_sp.data = (self.scale_sp * 0) + 1
         
         self.grid_eps = grid_eps
         

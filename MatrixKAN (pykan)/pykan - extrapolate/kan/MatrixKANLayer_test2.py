@@ -123,6 +123,12 @@ class MatrixKANLayer(nn.Module):
 
         self.basis_matrix = self.calculate_basis_matrix()
         self.basis_matrix = torch.nn.Parameter(self.basis_matrix).requires_grad_(False)
+
+        # Flatten parameters
+        self.coef.data = (self.coef * 0) + 1
+        self.mask.data = (self.mask * 0) + 1
+        self.scale_base.data = (self.scale_base * 0) + 1
+        self.scale_sp.data = (self.scale_sp * 0) + 1
         
         self.grid_eps = grid_eps
         
@@ -236,11 +242,9 @@ class MatrixKANLayer(nn.Module):
 
         out_of_bounds_interval = torch.zeros((grid_intervals.size(0), grid_intervals.size(1), 1), dtype=torch.bool).to(self.device)
         grid_intervals = torch.cat((out_of_bounds_interval, grid_intervals), -1)
-        # out_of_bounds = torch.all(~grid_intervals, dim=-1, keepdim=True)
 
-        basis_func_floor_indices = torch.argmax(grid_intervals.to(torch.int), dim=-1, keepdim=True) # + 1
-        # basis_func_floor_indices[out_of_bounds] = torch.tensor(0, device=self.device)
-        basis_func_floor_indices = (2 * self.k) + self.num + 1 - basis_func_floor_indices
+        basis_func_floor_indices = torch.argmax(grid_intervals.to(torch.int), dim=-1, keepdim=True)
+        basis_func_floor_indices = (2 * self.k) + self.num - basis_func_floor_indices + 1
         basis_func_indices = torch.arange(0, self.k + self.num, 1).unsqueeze(0).unsqueeze(0).to(self.device)
         basis_func_indices = basis_func_indices.expand(
             basis_matrices.size(0),
@@ -350,8 +354,8 @@ class MatrixKANLayer(nn.Module):
         batch = x.shape[0]
         #x = torch.einsum('ij,k->ikj', x, torch.ones(self.out_dim, ).to(self.device)).reshape(batch, self.size).permute(1, 0)
         x_pos = torch.sort(x, dim=0)[0]
-        y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
-        # y_eval = self.b_splines_matrix_output(x_pos)
+        # y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
+        y_eval = self.b_splines_matrix_output(x_pos)
         num_interval = self.grid.shape[1] - 1 - 2*self.k
         
         def get_grid(num_interval):
@@ -367,15 +371,15 @@ class MatrixKANLayer(nn.Module):
         if mode == 'grid':
             sample_grid = get_grid(2*num_interval)
             x_pos = sample_grid.permute(1,0)
-            y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
-            # y_eval = self.b_splines_matrix_output(x_pos)
+            # y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
+            y_eval = self.b_splines_matrix_output(x_pos)
 
         self.grid_range[:, 0], self.grid_range[:, 1] = grid[:, 0], grid[:, -1]
         self.grid_intervals.data = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.num
         
         self.grid.data = extend_grid(grid, k_extend=self.k)
-        self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
-        # self.coef.data = self.curve2coef(x_pos, y_eval, self.grid, self.k)
+        # self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
+        self.coef.data = self.curve2coef(x_pos, y_eval, self.grid, self.k)
 
     def initialize_grid_from_parent(self, parent, x, mode='sample'):
         '''
@@ -406,8 +410,8 @@ class MatrixKANLayer(nn.Module):
         batch = x.shape[0]
         
         x_pos = torch.sort(x, dim=0)[0]
-        y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
-        # y_eval = self.b_splines_matrix(x_pos)
+        # y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
+        y_eval = self.b_splines_matrix(x_pos)
         num_interval = self.grid.shape[1] - 1 - 2*self.k
         
         def get_grid(num_interval):
@@ -423,16 +427,16 @@ class MatrixKANLayer(nn.Module):
         if mode == 'grid':
             sample_grid = get_grid(2*num_interval)
             x_pos = sample_grid.permute(1,0)
-            y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
-            # y_eval = self.b_splines_matrix(x_pos)
+            # y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
+            y_eval = self.b_splines_matrix(x_pos)
 
         self.grid_range[:, 0], self.grid_range[:, 1] = grid[:, 0], grid[:, -1]
         self.grid_intervals.data = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.num
         
         grid = extend_grid(grid, k_extend=self.k)
         self.grid.data = grid
-        self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
-        # self.coef.data = self.curve2coef(x_pos, y_eval, self.grid, self.k)
+        # self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
+        self.coef.data = self.curve2coef(x_pos, y_eval, self.grid, self.k)
 
     def get_subset(self, in_id, out_id):
         '''

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 # from .KANLayer import KANLayer
-from MatrixKANLayer import MatrixKANLayer
+from MatrixKANLayer_test import MatrixKANLayer
 # from .Symbolic_MultKANLayer import *
 from kan.Symbolic_KANLayer import Symbolic_KANLayer
 from kan.LBFGS import *
