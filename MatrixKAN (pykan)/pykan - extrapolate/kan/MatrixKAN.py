@@ -1787,6 +1787,7 @@ class MatrixKAN(nn.Module):
         
         self = self.prune_node(node_th, log_history=False)
         #self.prune_node(node_th, log_history=False)
+        self.to(self.device)
         self.forward(self.cache_data)
         self.attribute()
         self.prune_edge(edge_th, log_history=False)
