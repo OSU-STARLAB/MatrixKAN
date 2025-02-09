@@ -1,29 +1,28 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from .KANLayer import KANLayer
-#from .Symbolic_MultKANLayer import *
-from .Symbolic_KANLayer import Symbolic_KANLayer
-from .LBFGS import *
+from MatrixKANLayer import MatrixKANLayer
+# from .Symbolic_MultKANLayer import *
+from kan.Symbolic_KANLayer import Symbolic_KANLayer
+from kan.LBFGS import *
 import os
 import glob
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import random
 import copy
-#from .MultKANLayer import MultKANLayer
 import pandas as pd
 from sympy.printing import latex
 from sympy import *
 import sympy
 import yaml
-from .spline import curve2coef
-from .utils import SYMBOLIC_LIB
-from .hypothesis import plot_tree
+from kan.spline import curve2coef
+from kan.utils import SYMBOLIC_LIB
+from kan.hypothesis import plot_tree
 
-class MultKAN(nn.Module):
+class MatrixKAN(nn.Module):
     '''
-    KAN class
+    MatrixKAN class
     
     Attributes:
     -----------
@@ -31,14 +30,14 @@ class MultKAN(nn.Module):
             the number of grid intervals
         k : int
             spline order
-        act_fun : a list of KANLayers
+        act_fun : a list of MatrixKANLayers
         symbolic_fun: a list of Symbolic_KANLayer
         depth : int
-            depth of KAN
+            depth of MatrixKAN
         width : list
             number of neurons in each layer.
             Without multiplication nodes, [2,5,5,3] means 2D inputs, 3D outputs, with 2 layers of 5 hidden neurons.
-            With multiplication nodes, [2,[5,3],[5,1],3] means besides the [2,5,53] KAN, there are 3 (1) mul nodes in layer 1 (2). 
+            With multiplication nodes, [2,[5,3],[5,1],3] means besides the [2,5,53] MatrixKAN, there are 3 (1) mul nodes in layer 1 (2).
         mult_arity : int, or list of int lists
             multiplication arity for each multiplication node (the number of numbers to be multiplied)
         grid : int
@@ -95,7 +94,7 @@ class MultKAN(nn.Module):
     '''
     def __init__(self, width=None, grid=3, k=3, mult_arity = 2, noise_scale=0.3, scale_base_mu=0.0, scale_base_sigma=1.0, base_fun='silu', symbolic_enabled=True, affine_trainable=False, grid_eps=0.02, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, seed=1, save_act=True, sparse_init=False, auto_save=True, first_init=True, ckpt_path='./model', state_id=0, round=0, device='cpu'):
         '''
-        initalize a KAN model
+        initalize a MatrixKAN model
         
         Args:
         -----
@@ -153,7 +152,7 @@ class MultKAN(nn.Module):
         checkpoint directory created: ./model
         saving model version 0.0
         '''
-        super(MultKAN, self).__init__()
+        super(MatrixKAN, self).__init__()
 
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -196,7 +195,7 @@ class MultKAN(nn.Module):
         
         for l in range(self.depth):
             # splines
-            sp_batch = KANLayer(in_dim=width_in[l], out_dim=width_out[l+1], num=grid, k=k, noise_scale=noise_scale, scale_base_mu=scale_base_mu, scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun, grid_eps=grid_eps, grid_range=grid_range, sp_trainable=sp_trainable, sb_trainable=sb_trainable, sparse_init=sparse_init)
+            sp_batch = MatrixKANLayer(in_dim=width_in[l], out_dim=width_out[l+1], num=grid, k=k, noise_scale=noise_scale, scale_base_mu=scale_base_mu, scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun, grid_eps=grid_eps, grid_range=grid_range, sp_trainable=sp_trainable, sb_trainable=sb_trainable, sparse_init=sparse_init)
             self.act_fun.append(sp_batch)
 
         self.node_bias = []
@@ -290,7 +289,7 @@ class MultKAN(nn.Module):
         >>> model = KAN(width=[2,5,1], grid=5, k=3, seed=0)
         >>> model.to(device)
         '''
-        super(MultKAN, self).to(device)
+        super(MatrixKAN, self).to(device)
         self.device = device
         
         for kanlayer in self.act_fun:
@@ -358,7 +357,7 @@ class MultKAN(nn.Module):
         
         Args:
         -----
-            another_model : MultKAN
+            another_model : MatrixKAN
             x : 2D torch.float
 
         Returns:
@@ -430,7 +429,7 @@ class MultKAN(nn.Module):
 
         Returns:
         --------
-            a refined model : MultKAN
+            a refined model : MatrixKAN
             
         Example
         -------
@@ -449,7 +448,7 @@ class MultKAN(nn.Module):
         10
         '''
 
-        model_new = MultKAN(width=self.width, 
+        model_new = MatrixKAN(width=self.width,
                      grid=new_grid, 
                      k=self.k, 
                      mult_arity=self.mult_arity, 
@@ -541,7 +540,7 @@ class MultKAN(nn.Module):
 
         Returns:
         --------
-            MultKAN
+            MatrixKAN
             
         Example
         -------
@@ -555,7 +554,7 @@ class MultKAN(nn.Module):
 
         state = torch.load(f'{path}_state')
 
-        model_load = MultKAN(width=config['width'], 
+        model_load = MatrixKAN(width=config['width'],
                      grid=config['grid'], 
                      k=config['k'], 
                      mult_arity = config['mult_arity'], 
@@ -601,7 +600,7 @@ class MultKAN(nn.Module):
 
         Returns:
         --------
-            MultKAN
+            MatrixKAN
             
         Example
         -------
@@ -614,7 +613,7 @@ class MultKAN(nn.Module):
         '''
         path='copy_temp'
         self.saveckpt(path)
-        return KAN.loadckpt(path)
+        return MatrixKAN.loadckpt(path)
     
     def rewind(self, model_id):
         '''
@@ -627,7 +626,7 @@ class MultKAN(nn.Module):
 
         Returns:
         --------
-            MultKAN
+            MatrixKAN
             
         Example
         -------
@@ -644,7 +643,7 @@ class MultKAN(nn.Module):
         
         print('rewind to model version '+f'{self.round-1}.{self.state_id}'+', renamed as '+f'{self.round}.{self.state_id}')
 
-        return MultKAN.loadckpt(path=self.ckpt_path+'/'+str(model_id))
+        return MatrixKAN.loadckpt(path=self.ckpt_path+'/'+str(model_id))
     
     
     def checkout(self, model_id):
@@ -658,13 +657,13 @@ class MultKAN(nn.Module):
 
         Returns:
         --------
-            MultKAN
+            MatrixKAN
             
         Example
         -------
         Same use as rewind, although checkout doesn't change states
         ''' 
-        return MultKAN.loadckpt(path=self.ckpt_path+'/'+str(model_id))
+        return MatrixKAN.loadckpt(path=self.ckpt_path+'/'+str(model_id))
     
     def update_grid_from_samples(self, x):
         '''
@@ -694,7 +693,7 @@ class MultKAN(nn.Module):
             
     def update_grid(self, x):
         '''
-        call update_grid_from_samples. This seems unnecessary but we retain it for the sake of classes that might inherit from MultKAN
+        call update_grid_from_samples. This seems unnecessary but we retain it for the sake of classes that might inherit from MatrixKAN
         '''
         self.update_grid_from_samples(x)
 
@@ -704,7 +703,7 @@ class MultKAN(nn.Module):
         
         Args:
         -----
-            model : MultKAN
+            model : MatrixKAN
                 parent model
             x : 2D torch.tensor
                 inputs
@@ -1004,7 +1003,7 @@ class MultKAN(nn.Module):
 
     def plot(self, folder="./figures", beta=3, metric='backward', scale=0.5, tick=False, sample=False, in_vars=None, out_vars=None, title=None, varscale=1.0):
         '''
-        plot KAN
+        plot MatrixKAN
         
         Args:
         -----
@@ -1479,6 +1478,8 @@ class MultKAN(nn.Module):
             optimizer = torch.optim.Adam(self.get_params(), lr=lr)
         elif opt == "LBFGS":
             optimizer = LBFGS(self.get_params(), lr=lr, history_size=10, line_search_fn="strong_wolfe", tolerance_grad=1e-32, tolerance_change=1e-32, tolerance_ys=1e-32)
+        elif opt == "AdamW":
+            optimizer = torch.optim.AdamW(self.get_params(), lr=lr, weight_decay=1e-4)
 
         results = {}
         results['train_loss'] = []
@@ -1532,7 +1533,7 @@ class MultKAN(nn.Module):
             if opt == "LBFGS":
                 optimizer.step(closure)
 
-            if opt == "Adam":
+            if opt == "Adam" or opt == "AdamW":
                 pred = self.forward(dataset['train_input'][train_id], singularity_avoiding=singularity_avoiding, y_th=y_th)
                 train_loss = loss_fn(pred, dataset['train_label'][train_id])
                 if self.save_act:
@@ -1598,7 +1599,7 @@ class MultKAN(nn.Module):
             
         Returns:
         --------
-            pruned network : MultKAN
+            pruned network : MatrixKAN
 
         Example
         -------
@@ -1680,7 +1681,7 @@ class MultKAN(nn.Module):
                 if i not in active_neurons_down[l]:
                     self.remove_node(l + 1, i, mode='down',log_history=False)
 
-        model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun_name, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round).to(self.device)
+        model2 = MatrixKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun_name, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round).to(self.device)
         model2.load_state_dict(self.state_dict())
         
         width_new = [self.width[0]]
@@ -1733,7 +1734,7 @@ class MultKAN(nn.Module):
             
         Returns:
         --------
-            pruned network : MultKAN
+            pruned network : MatrixKAN
 
         Example
         -------
@@ -1769,7 +1770,7 @@ class MultKAN(nn.Module):
             
         Returns:
         --------
-            pruned network : MultKAN
+            pruned network : MatrixKAN
 
         Example
         -------
@@ -1786,6 +1787,7 @@ class MultKAN(nn.Module):
         
         self = self.prune_node(node_th, log_history=False)
         #self.prune_node(node_th, log_history=False)
+        self.to(self.device)
         self.forward(self.cache_data)
         self.attribute()
         self.prune_edge(edge_th, log_history=False)
@@ -1805,7 +1807,7 @@ class MultKAN(nn.Module):
             
         Returns:
         --------
-            pruned network : MultKAN
+            pruned network : MatrixKAN
 
         Example1
         --------
@@ -1841,7 +1843,7 @@ class MultKAN(nn.Module):
         else:
             input_id = torch.tensor(active_inputs, dtype=torch.long).to(self.device)
         
-        model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round).to(self.device)
+        model2 = MatrixKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round).to(self.device)
         model2.load_state_dict(self.state_dict())
 
         model2.act_fun[0] = model2.act_fun[0].get_subset(input_id, torch.arange(self.width_out[1]))
@@ -2352,7 +2354,7 @@ class MultKAN(nn.Module):
 
         # add kanlayer, set mask to zero
         dim_out = self.width_in[-1]
-        layer = KANLayer(dim_out, dim_out, num=self.grid, k=self.k)
+        layer = MatrixKANLayer(dim_out, dim_out, num=self.grid, k=self.k)
         layer.mask *= 0.
         self.act_fun.append(layer)
 
@@ -2423,7 +2425,7 @@ class MultKAN(nn.Module):
                                 new.affine.data[j][i] = old.affine.data[j-n_added_nodes][i]
 
                     self.symbolic_fun[l] = new
-                    self.act_fun[l] = KANLayer(in_dim, out_dim + n_added_nodes, num=self.grid, k=self.k)
+                    self.act_fun[l] = MatrixKANLayer(in_dim, out_dim + n_added_nodes, num=self.grid, k=self.k)
                     self.act_fun[l].mask *= 0.
 
                     self.node_scale[l].data = torch.cat([torch.ones(n_added_nodes, device=self.device), self.node_scale[l].data])
@@ -2454,7 +2456,7 @@ class MultKAN(nn.Module):
                                 new.affine.data[j][i] = old.affine.data[j][i-n_added_nodes]
 
                     self.symbolic_fun[l] = new
-                    self.act_fun[l] = KANLayer(in_dim + n_added_nodes, out_dim, num=self.grid, k=self.k)
+                    self.act_fun[l] = MatrixKANLayer(in_dim + n_added_nodes, out_dim, num=self.grid, k=self.k)
                     self.act_fun[l].mask *= 0.
 
 
@@ -2485,7 +2487,7 @@ class MultKAN(nn.Module):
                                 new.affine.data[j][i] = old.affine.data[j][i]
 
                     self.symbolic_fun[l] = new
-                    self.act_fun[l] = KANLayer(in_dim, out_dim + n_added_subnodes, num=self.grid, k=self.k)
+                    self.act_fun[l] = MatrixKANLayer(in_dim, out_dim + n_added_subnodes, num=self.grid, k=self.k)
                     self.act_fun[l].mask *= 0.
 
                     self.node_scale[l].data = torch.cat([self.node_scale[l].data, torch.ones(n_added_nodes, device=self.device)])
@@ -2514,7 +2516,7 @@ class MultKAN(nn.Module):
                                 new.affine.data[j][i] = old.affine.data[j][i]
 
                     self.symbolic_fun[l] = new
-                    self.act_fun[l] = KANLayer(in_dim + n_added_nodes, out_dim, num=self.grid, k=self.k)
+                    self.act_fun[l] = MatrixKANLayer(in_dim + n_added_nodes, out_dim, num=self.grid, k=self.k)
                     self.act_fun[l].mask *= 0.
 
         _expand(layer_id-1, n_added_nodes, sum_bool, mult_arity, added_dim='out')
@@ -2637,7 +2639,7 @@ class MultKAN(nn.Module):
         
     def tree(self, x=None, in_var=None, style='tree', sym_th=1e-3, sep_th=1e-1, skip_sep_test=False, verbose=False):
         '''
-        turn KAN into a tree
+        turn MatrixKAN into a tree
         '''
         if x == None:
             x = self.cache_data
@@ -2646,7 +2648,7 @@ class MultKAN(nn.Module):
         
     def speed(self, compile=False):
         '''
-        turn on KAN's speed mode
+        turn on MatrixKAN's speed mode
         '''
         self.symbolic_enabled=False
         self.save_act=False
@@ -2782,4 +2784,4 @@ class MultKAN(nn.Module):
             
         self.log_history('auto_swap')
 
-KAN = MultKAN
+KAN = MatrixKAN
