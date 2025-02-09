@@ -8,3 +8,4 @@ venv/
 MatrixKAN (pykan)\pykan - extrapolate\kan\Speed Tests
 MatrixKAN (pykan)\pykan - extrapolate\kan\Performance Tests
 MatrixKAN (pykan)\pykan - extrapolate\kan\log
+.gitignore
