@@ -1,11 +1,2 @@
-MatrixKAN (efficient_kan)/Archive/
-MatrixKAN (efficient_kan)/Test Scripts/
-MatrixKAN (efficient_kan)/Logs/
-Misc/
-Reference/
 venv/
 .idea/
-MatrixKAN (pykan)\pykan - extrapolate\kan\Speed Tests
-MatrixKAN (pykan)\pykan - extrapolate\kan\Performance Tests
-MatrixKAN (pykan)\pykan - extrapolate\kan\log
-.gitignore
