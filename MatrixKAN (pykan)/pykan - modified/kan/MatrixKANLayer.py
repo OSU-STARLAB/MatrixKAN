@@ -1,10 +1,8 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from torch.nn.functional import layer_norm
-
-from .spline import *
-from .utils import sparse_mask
+from kan.spline import *
+from kan.utils import sparse_mask
 
 
 class MatrixKANLayer(nn.Module):
@@ -45,7 +43,7 @@ class MatrixKANLayer(nn.Module):
 
     def __init__(self, in_dim=3, out_dim=2, num=5, k=3, noise_scale=0.5, scale_base_mu=0.0, scale_base_sigma=1.0, scale_sp=1.0, base_fun=torch.nn.SiLU(), grid_eps=0.02, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, save_plot_data = True, device='cpu', sparse_init=False):
         ''''
-        initialize a KANLayer
+        initialize a MatrixKANLayer
         
         Args:
         -----
@@ -86,8 +84,8 @@ class MatrixKANLayer(nn.Module):
             
         Example
         -------
-        >>> from kan.MatrixKANLayer import *
-        >>> model = MatrixKANLayer(in_dim=3, out_dim=5)
+        >>> from kan.KANLayer import *
+        >>> model = KANLayer(in_dim=3, out_dim=5)
         >>> (model.in_dim, model.out_dim)
         '''
         super(MatrixKANLayer, self).__init__()
@@ -102,6 +100,13 @@ class MatrixKANLayer(nn.Module):
         self.grid = torch.nn.Parameter(grid).requires_grad_(False)
         noises = (torch.rand(self.num+1, self.in_dim, self.out_dim) - 1/2) * noise_scale / num
 
+        self.grid_range = torch.tensor(grid_range, device=device).unsqueeze(0).expand(in_dim, -1)
+        self.grid_range = self.grid_range.clone().to(dtype=torch.float64)
+        self.grid_range = torch.nn.Parameter(self.grid_range).requires_grad_(False)
+
+        self.grid_intervals = ((self.grid_range[:, 1] - self.grid_range[:, 0]) / num)
+        self.grid_intervals = torch.nn.Parameter(self.grid_intervals).requires_grad_(False)
+
         self.coef = torch.nn.Parameter(curve2coef(self.grid[:,k:-k].permute(1,0), noises, self.grid, k))
         
         if sparse_init:
@@ -113,19 +118,12 @@ class MatrixKANLayer(nn.Module):
                          scale_base_sigma * (torch.rand(in_dim, out_dim)*2-1) * 1/np.sqrt(in_dim)).requires_grad_(sb_trainable)
         self.scale_sp = torch.nn.Parameter(torch.ones(in_dim, out_dim) * scale_sp * self.mask).requires_grad_(sp_trainable)  # make scale trainable
         self.base_fun = base_fun
-        # self.grid_range = grid_range
-        self.grid_range = torch.tensor(grid_range, device=device).unsqueeze(0).expand(in_dim, -1)
-        self.grid_range = self.grid_range.clone().to(dtype=torch.float64)
-        # self.grid_interval = (grid_range[1] - grid_range[0]) / num
-        self.grid_intervals = ((self.grid_range[:,1] - self.grid_range[:,0]) / num)
+
         self.device = device
 
-        self.layer_norm = torch.nn.Tanh()
-        self.layer_norm_scalars = self.grid_range[:,-1]
-
-        # Initialize Basis Matrix
-        self.basis_matrix = self.basis_matrix()
-
+        self.basis_matrix = self.calculate_basis_matrix()
+        self.basis_matrix = torch.nn.Parameter(self.basis_matrix).requires_grad_(False)
+        
         self.grid_eps = grid_eps
         
         self.to(device)
@@ -135,55 +133,7 @@ class MatrixKANLayer(nn.Module):
         self.device = device    
         return self
 
-    def forward(self, x):
-        '''
-        KANLayer forward given input x
-        
-        Args:
-        -----
-            x : 2D torch.float
-                inputs, shape (number of samples, input dimension)
-            
-        Returns:
-        --------
-            y : 2D torch.float
-                outputs, shape (number of samples, output dimension)
-            preacts : 3D torch.float
-                fan out x into activations, shape (number of sampels, output dimension, input dimension)
-            postacts : 3D torch.float
-                the outputs of activation functions with preacts as inputs
-            postspline : 3D torch.float
-                the outputs of spline functions with preacts as inputs
-        
-        Example
-        -------
-        >>> from kan.MatrixKANLayer import *
-        >>> model = MatrixKANLayer(in_dim=3, out_dim=5)
-        >>> x = torch.normal(0,1,size=(100,3))
-        >>> y, preacts, postacts, postspline = model(x)
-        >>> y.shape, preacts.shape, postacts.shape, postspline.shape
-        '''
-        batch = x.shape[0]
-
-        x_norm = self.layer_norm(x)
-        x_norm = x_norm * self.layer_norm_scalars
-
-        preacts = x_norm[:, None, :].clone().expand(batch, self.out_dim, self.in_dim)
-            
-        base = self.base_fun(x_norm) # (batch, in_dim)
-        y = self.b_spline_matrix(x_norm)
-        
-        postspline = y.clone().permute(0,2,1)
-            
-        y = self.scale_base[None,:,:] * base[:,:,None] + self.scale_sp[None,:,:] * y
-        y = self.mask[None,:,:] * y
-        
-        postacts = y.clone().permute(0,2,1)
-            
-        y = torch.sum(y, dim=1)
-        return y, preacts, postacts, postspline
-
-    def basis_matrix(self):
+    def calculate_basis_matrix(self):
         """
         Compute the basis matrix for a uniform B-spline with a given spline degree.
 
@@ -203,8 +153,8 @@ class MatrixKANLayer(nn.Module):
             term_1 = torch.nn.functional.pad(basis_matrix, (0, 0, 0, 1), "constant", 0)
             term_3 = torch.nn.functional.pad(basis_matrix, (0, 0, 1, 0), "constant", 0)
 
-            term_2 = torch.zeros((k - 1, k), dtype=term_1.dtype, device=self.device)
-            term_4 = torch.zeros((k - 1, k), dtype=term_3.dtype, device=self.device)
+            term_2 = torch.zeros((k - 1, k), device=self.device, dtype=term_1.dtype)
+            term_4 = torch.zeros((k - 1, k), device=self.device, dtype=term_3.dtype)
             for i in range(k - 1):
                 term_2[i, i] = i + 1
                 term_2[i, i + 1] = k - (i + 2)
@@ -224,44 +174,31 @@ class MatrixKANLayer(nn.Module):
         """
         Compute power bases for the given input tensor.
 
-        :Args:
+        Args:
             x (torch.Tensor):                   Input tensor of shape (batch_size, sequence length, in_features).
 
         Returns:
             u (torch.Tensor):                   Power bases tensor of shape
                                                 (batch_size, sequence length, in_features, spline_order + 1).
-
-            grid_interval_floor (torch.Tensor): self.grid expanded per input and masked to represent lower bound
-                                                of applicable knot interval
-
-            grid_interval_floor_indices
-            (torch.Tensor):                     Indices of lower bound of applicable knot interval in self.grid.
         """
 
-        # Determine applicable grid interval values (lower-bound)
-        grid_floors = self.grid[:,0]
+        # Determine applicable grid interval boundary values
+        grid_floors = self.grid[:, 0]
         grid_floors = grid_floors.unsqueeze(0).expand(x.shape[0], -1)
-        x_pos = x - grid_floors
-        x_interval_floor = torch.floor(x_pos / self.grid_intervals)
-        x_interval_floor = ((x_interval_floor * self.grid_intervals) + grid_floors)
 
-        # Determine applicable grid interval values (upper-bound)
+        x = x.unsqueeze(dim=2)
+        grid = self.grid.unsqueeze(dim=0)
+
+        x.to(self.device)
+        x_intervals = (x >= grid[:, :, :-1]) * (x < grid[:, :, 1:])
+        x_interval_floor = torch.argmax(x_intervals.to(torch.int), dim=-1, keepdim=True)
+        x_interval_floor = x_interval_floor.squeeze(-1)
+        x_interval_floor = ((x_interval_floor * self.grid_intervals) + grid_floors)
         x_interval_ceiling = x_interval_floor + self.grid_intervals
 
-        # Calculate grid indices of interval floor
-        if self.grid.shape[-1] != x_interval_floor.shape[-1]:
-            x_interval_floor = x_interval_floor.unsqueeze(-1)
-        grid_interval_floor = torch.isclose(self.grid, x_interval_floor)
-
-        # Calculate index position of the lower knot in the applicable knot span.
-        # This is later used to calculate the applicable control points / basis functions.
-        grid_interval_floor_indices = torch.nonzero(grid_interval_floor, as_tuple=True)
-        grid_interval_floor_indices = grid_interval_floor_indices[-1]
-        grid_interval_floor_indices = grid_interval_floor_indices.reshape(x.shape)
+        x = x.squeeze(2)
 
         # Calculate power bases
-        if x.shape[-1] != x_interval_floor.shape[-1]:
-            x_interval_floor = x_interval_floor.reshape(x.shape)
         u1_numerator = x - x_interval_floor
         u1_denominator = x_interval_ceiling - x_interval_floor
         u1 = (u1_numerator / u1_denominator).unsqueeze(-1)
@@ -271,112 +208,118 @@ class MatrixKANLayer(nn.Module):
             base = u1 ** i
             u = torch.cat((u, base), -1)
 
-        return u, grid_interval_floor_indices
+        return u, x_intervals
 
-    def b_spline_matrix(self, x: torch.Tensor):
+    def b_splines_matrix(self, x):
         """
-        Compute spline output for the given input tensor.
+        Computes the b-spline output based on the given input tensor.
 
-        :Args:
+        Args:
+            x (torch.Tensor):   Input tensor of shape (batch_size, sequence length, in_features).                       ######### CONFIRM SIZES ##########
+
+        Returns:
+            torch.Tensor:                                                                                               ######## COMPLETE ME #############
+        """
+
+        # Calculate power bases and applicable grid intervals
+        power_bases, x_intervals = self.power_bases(x)
+
+        # Pad basis matrix per input
+        basis_matrices = torch.nn.functional.pad(self.basis_matrix, (self.k + self.num, self.k + self.num),
+                                                 mode='constant', value=0)
+        basis_matrices = basis_matrices.unsqueeze(0).unsqueeze(0)
+        basis_matrices = basis_matrices.expand(power_bases.size(0), self.in_dim, -1, -1)
+
+        # Calculate applicable grid intervals
+        out_of_bounds_interval = torch.zeros((x_intervals.size(0), x_intervals.size(1), 1), dtype=torch.bool).to(self.device)
+        x_intervals = torch.cat((out_of_bounds_interval, x_intervals), -1)
+
+        # Identify and gather applicable basis functions
+        basis_func_floor_indices = torch.argmax(x_intervals.to(torch.int), dim=-1, keepdim=True)
+        basis_func_floor_indices = (2 * self.k) + self.num - basis_func_floor_indices + 1
+        basis_func_indices = torch.arange(0, self.k + self.num, 1).unsqueeze(0).unsqueeze(0).to(self.device)
+        basis_func_indices = basis_func_indices.expand(
+            basis_matrices.size(0),
+            basis_matrices.size(1),
+            basis_matrices.size(2),
+            -1
+        )
+        basis_func_indices = basis_func_indices.clone()
+        basis_func_indices += basis_func_floor_indices.unsqueeze(-2).expand(-1, -1, basis_func_indices.size(-2), -1)
+
+        basis_matrices = torch.gather(basis_matrices, -1, basis_func_indices)
+
+        # Calculate basis function outputs
+        power_bases = power_bases.unsqueeze(-2)
+        result = torch.matmul(power_bases, basis_matrices)
+        result = result.squeeze(-2)
+
+        # in case grid is degenerate
+        result = torch.nan_to_num(result)
+        return result
+
+    def b_splines_matrix_output(self, x: torch.Tensor):
+        """
+        Computes b-spline output based on the given input tensor and spline coefficients.
+
+        Args:
             x (torch.Tensor):   Input tensor of shape (batch_size, sequence length, in_features).
 
         Returns:
             torch.Tensor:       Power bases tensor of shape (batch_size, sequence length, out_features).
         """
 
-        # Calculate power bases
-        power_bases, grid_interval_floor_indices = self.power_bases(x)
-
-        # Calculate applicable control points
-        if self.num == 1:
-            # If grid_size == 1, only one curve defined for spline / all control points apply.
-            control_point_floor_indices = torch.zeros(grid_interval_floor_indices.shape,
-                                                      dtype=torch.int64,
-                                                      device=self.device)
-        else:
-            # If grid_size > 1, multiple curves defined for spline / calculate applicable control points per input
-            # For knot interval [u(i), u(i+1)), applicable control points are P(i-p) ... P(i)
-            control_point_floor_indices = (grid_interval_floor_indices - self.k)
-
-        control_point_floor_indices = control_point_floor_indices.unsqueeze(-1)
-
-        control_point_indices = torch.arange(0, self.k + 1, 1).unsqueeze(0).unsqueeze(0).to(self.device)
-        control_point_indices = control_point_indices.expand(
-            control_point_floor_indices.size(0),
-            control_point_floor_indices.size(1),
-            -1
-        )
-        control_point_indices = control_point_indices.clone()
-        control_point_indices += control_point_floor_indices
-        control_point_indices = control_point_indices.unsqueeze(2).expand(-1, -1, self.out_dim, -1)
-
-        control_points = self.coef.unsqueeze(0).expand(
-            control_point_indices.size(0), -1, -1, -1)
-        control_points = torch.gather(control_points, -1, control_point_indices)
-        control_points = control_points.view(
-            control_point_indices.size(0),
-            control_point_indices.size(1),
-            control_point_indices.size(2),
-            -1)
+        # Calculate basis function outputs
+        basis_func_outputs = self.b_splines_matrix(x)
 
         # Calculate spline outputs
-        prod1 = torch.matmul(power_bases, self.basis_matrix)
-        prod1 = prod1.view(x.size(0), x.size(1), -1).unsqueeze(-2)
-        control_points = control_points.view(control_points.size(0), control_points.size(1), -1, control_points.size(2))
-        result = torch.matmul(prod1, control_points).squeeze(-2)
+        result = torch.einsum('ijk,jlk->ijl', basis_func_outputs, self.coef)
 
         return result
 
-    def update_grid_from_samples_uniform(self, x, mode='sample'):
+    def forward(self, x):
         '''
-        update grid from samples (uniform)
-
+        MatrixKANLayer forward given input x
+        
         Args:
         -----
             x : 2D torch.float
                 inputs, shape (number of samples, input dimension)
-
+            
         Returns:
         --------
-            None
-
+            y : 2D torch.float
+                outputs, shape (number of samples, output dimension)
+            preacts : 3D torch.float
+                fan out x into activations, shape (number of sampels, output dimension, input dimension)
+            postacts : 3D torch.float
+                the outputs of activation functions with preacts as inputs
+            postspline : 3D torch.float
+                the outputs of spline functions with preacts as inputs
+        
         Example
         -------
-        >>> model = KANLayer(in_dim=1, out_dim=1, num=5, k=3)
-        >>> print(model.grid.data)
-        >>> x = torch.linspace(-3,3,steps=100)[:,None]
-        >>> model.update_grid_from_samples(x)
-        >>> print(model.grid.data)
+        >>> from kan.KANLayer import *
+        >>> model = KANLayer(in_dim=3, out_dim=5)
+        >>> x = torch.normal(0,1,size=(100,3))
+        >>> y, preacts, postacts, postspline = model(x)
+        >>> y.shape, preacts.shape, postacts.shape, postspline.shape
         '''
-
         batch = x.shape[0]
-        x_pos = torch.sort(x, dim=0)[0]
-        y_eval = self.b_spline_matrix(self.layer_norm(x_pos) * self.layer_norm_scalars)
-        num_interval = self.grid.shape[1] - 1 - 2 * self.k
-
-        def get_grid(num_interval):
-            grid_max = torch.max(torch.abs(x_pos[[0, -1], :].permute(1, 0)), dim=1)[0]
-            h = ((grid_max * 2 )/ num_interval).unsqueeze(-1)
-            grid_max = grid_max.unsqueeze(-1)
-            grid_uniform = (h * torch.arange(num_interval + 1, )[None, :].to(x.device)) - grid_max
-            return grid_uniform
-
-        grid = get_grid(num_interval)
-
-        if mode == 'grid':
-            sample_grid = get_grid(2 * num_interval)
-            x_pos = sample_grid.permute(1, 0)
-            # y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
-            y_eval = self.b_spline_matrix(x_pos)
-
-        self.grid_range[:,0], self.grid_range[:,1] = grid[:,0], grid[:,-1]
-        self.grid_intervals = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.num
-
-        # Determine scalar for new layer_norm and update
-        self.layer_norm_scalars = self.grid_range[:,-1]
-
-        self.grid.data = extend_grid(grid, k_extend=self.k)
-        self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
+        preacts = x[:,None,:].clone().expand(batch, self.out_dim, self.in_dim)
+            
+        base = self.base_fun(x) # (batch, in_dim)
+        y = self.b_splines_matrix_output(x)
+        
+        postspline = y.clone().permute(0,2,1)
+            
+        y = self.scale_base[None,:,:] * base[:,:,None] + self.scale_sp[None,:,:] * y
+        y = self.mask[None,:,:] * y
+        
+        postacts = y.clone().permute(0,2,1)
+            
+        y = torch.sum(y, dim=1)
+        return y, preacts, postacts, postspline
 
     def update_grid_from_samples(self, x, mode='sample'):
         '''
@@ -401,11 +344,9 @@ class MatrixKANLayer(nn.Module):
         '''
         
         batch = x.shape[0]
-        #x = torch.einsum('ij,k->ikj', x, torch.ones(self.out_dim, ).to(self.device)).reshape(batch, self.size).permute(1, 0)
         x_pos = torch.sort(x, dim=0)[0]
-        #y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
-        y_eval = self.b_spline_matrix(x_pos)
-        num_interval = self.grid.shape[1] - 1 - 2*self.k
+        y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
+        num_interval = self.grid.shape[1] - 1 - 2 * self.k
         
         def get_grid(num_interval):
             ids = [int(batch / num_interval * i) for i in range(num_interval)] + [-1]
@@ -420,20 +361,22 @@ class MatrixKANLayer(nn.Module):
         if mode == 'grid':
             sample_grid = get_grid(2*num_interval)
             x_pos = sample_grid.permute(1,0)
-            # y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
-            y_eval = self.b_spline_matrix(x_pos)
+            y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
+
+        self.grid_range[:, 0], self.grid_range[:, 1] = grid[:, 0], grid[:, -1]
+        self.grid_intervals.data = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.num
         
         self.grid.data = extend_grid(grid, k_extend=self.k)
         self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
 
     def initialize_grid_from_parent(self, parent, x, mode='sample'):
         '''
-        update grid from a parent KANLayer & samples
+        update grid from a parent MatrixKANLayer & samples
         
         Args:
         -----
-            parent : KANLayer
-                a parent KANLayer (whose grid is usually coarser than the current model)
+            parent : MatrixKANLayer
+                a parent MatrixKANLayer (whose grid is usually coarser than the current model)
             x : 2D torch.float
                 inputs, shape (number of samples, input dimension)
             
@@ -455,8 +398,7 @@ class MatrixKANLayer(nn.Module):
         batch = x.shape[0]
         
         x_pos = torch.sort(x, dim=0)[0]
-        # y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
-        y_eval = self.b_spline_matrix(x_pos)
+        y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
         num_interval = self.grid.shape[1] - 1 - 2*self.k
         
         def get_grid(num_interval):
@@ -472,8 +414,10 @@ class MatrixKANLayer(nn.Module):
         if mode == 'grid':
             sample_grid = get_grid(2*num_interval)
             x_pos = sample_grid.permute(1,0)
-            # y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
-            y_eval = self.b_spline_matrix(x_pos)
+            y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
+
+        self.grid_range[:, 0], self.grid_range[:, 1] = grid[:, 0], grid[:, -1]
+        self.grid_intervals.data = (self.grid_range[:, 1] - self.grid_range[:, 0]) / self.num
         
         grid = extend_grid(grid, k_extend=self.k)
         self.grid.data = grid
@@ -481,7 +425,7 @@ class MatrixKANLayer(nn.Module):
 
     def get_subset(self, in_id, out_id):
         '''
-        get a smaller KANLayer from a larger KANLayer (used for pruning)
+        get a smaller MatrixKANLayer from a larger MatrixKANLayer (used for pruning)
         
         Args:
         -----
@@ -492,7 +436,7 @@ class MatrixKANLayer(nn.Module):
             
         Returns:
         --------
-            spb : KANLayer
+            spb : MatrixKANLayer
             
         Example
         -------
@@ -501,7 +445,7 @@ class MatrixKANLayer(nn.Module):
         >>> kanlayer_small.in_dim, kanlayer_small.out_dim
         (2, 3)
         '''
-        spb = KANLayer(len(in_id), len(out_id), self.num, self.k, base_fun=self.base_fun)
+        spb = MatrixKANLayer(len(in_id), len(out_id), self.num, self.k, base_fun=self.base_fun)
         spb.grid.data = self.grid[in_id]
         spb.coef.data = self.coef[in_id][:,out_id]
         spb.scale_base.data = self.scale_base[in_id][:,out_id]

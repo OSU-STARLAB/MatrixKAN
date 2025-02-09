@@ -30,7 +30,7 @@ def B_batch(x, grid, k=0, extend=True, device='cpu'):
     >>> grid = torch.linspace(-1,1,steps=11)[None, :].expand(2, 11)
     >>> B_batch(x, grid, k=3).shape
     '''
-    
+
     x = x.unsqueeze(dim=2)
     grid = grid.unsqueeze(dim=0)
     
