@@ -46,11 +46,15 @@ pip install -r Requirements.txt
 ```
 
 ## KNOWN ISSUES
-```
+
 prune() - Pruning of MatrixKAN networks sometimes results in NaN parameter values.
-```
+
 
 ## Citation
 ```python
 *************TO BE ADDED*******************
 ```
+
+## Credits
+
+We would like to thank the creators of [pykan](https://github.com/KindXiaoming/pykan/) for developing the KAN architecture that is optimized here.
