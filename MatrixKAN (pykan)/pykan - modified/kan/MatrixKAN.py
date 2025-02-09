@@ -1,45 +1,45 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from .KANLayer import KANLayer
-from .MatrixKANLayer import MatrixKANLayer
-#from .Symbolic_MatrixKANLayer import *
-from .Symbolic_KANLayer import Symbolic_KANLayer
-from .LBFGS import *
+# from .KANLayer import KANLayer
+from MatrixKANLayer import MatrixKANLayer
+# from .Symbolic_MultKANLayer import *
+from kan.Symbolic_KANLayer import Symbolic_KANLayer
+from kan.LBFGS import *
 import os
 import glob
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import random
 import copy
-#from .MatrixKANLayer import MatrixKANLayer
+#from .MultKANLayer import MultKANLayer
 import pandas as pd
 from sympy.printing import latex
 from sympy import *
 import sympy
 import yaml
-from .spline import curve2coef
-from .utils import SYMBOLIC_LIB
-from .hypothesis import plot_tree
+from kan.spline import curve2coef
+from kan.utils import SYMBOLIC_LIB
+from kan.hypothesis import plot_tree
 
 class MatrixKAN(nn.Module):
     '''
-    KAN class
-
+    MatrixKAN class
+    
     Attributes:
     -----------
         grid : int
             the number of grid intervals
         k : int
             spline order
-        act_fun : a list of KANLayers
+        act_fun : a list of MatrixKANLayers
         symbolic_fun: a list of Symbolic_KANLayer
         depth : int
-            depth of KAN
+            depth of MatrixKAN
         width : list
             number of neurons in each layer.
             Without multiplication nodes, [2,5,5,3] means 2D inputs, 3D outputs, with 2 layers of 5 hidden neurons.
-            With multiplication nodes, [2,[5,3],[5,1],3] means besides the [2,5,53] KAN, there are 3 (1) mul nodes in layer 1 (2).
+            With multiplication nodes, [2,[5,3],[5,1],3] means besides the [2,5,53] MatrixKAN, there are 3 (1) mul nodes in layer 1 (2).
         mult_arity : int, or list of int lists
             multiplication arity for each multiplication node (the number of numbers to be multiplied)
         grid : int
@@ -94,10 +94,10 @@ class MatrixKAN(nn.Module):
             the number of times rewind() has been called
         device : str
     '''
-    def __init__(self, width=None, grid=3, k=3, mult_arity = 2, noise_scale=0.3, scale_base_mu=0.0, scale_base_sigma=1.0, base_fun='silu', symbolic_enabled=True, affine_trainable=False, grid_eps=0.02, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, seed=1, save_act=True, sparse_init=False, auto_save=True, first_init=True, ckpt_path='./model', state_id=0, round=0, device='cpu', spline_matrix=False):
+    def __init__(self, width=None, grid=3, k=3, mult_arity = 2, noise_scale=0.3, scale_base_mu=0.0, scale_base_sigma=1.0, base_fun='silu', symbolic_enabled=True, affine_trainable=False, grid_eps=0.02, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, seed=1, save_act=True, sparse_init=False, auto_save=True, first_init=True, ckpt_path='./model', state_id=0, round=0, device='cpu'):
         '''
-        initalize a KAN model
-
+        initalize a MatrixKAN model
+        
         Args:
         -----
             width : list of int
@@ -114,7 +114,7 @@ class MatrixKAN(nn.Module):
             base_fun : str
                 the residual function b(x). Default: 'silu'
             symbolic_enabled : bool
-                compute (True) or skip (False) symbolic computations (for efficiency). By default: True.
+                compute (True) or skip (False) symbolic computations (for efficiency). By default: True. 
             affine_trainable : bool
                 affine parameters are updated or not. Affine parameters include node_scale, node_bias, subnode_scale, subnode_bias
             grid_eps : float
@@ -142,12 +142,11 @@ class MatrixKAN(nn.Module):
             round : int
                 the number of times rewind() has been called
             device : str
-            spline_matrix : bool
-                indicate whether to use parallelized matrix calculation method for splines
+            
         Returns:
         --------
             self
-
+            
         Example
         -------
         >>> from kan import *
@@ -165,25 +164,25 @@ class MatrixKAN(nn.Module):
 
         self.act_fun = []
         self.depth = len(width) - 1
-
+        
         for i in range(len(width)):
             if type(width[i]) == int:
                 width[i] = [width[i],0]
-
+            
         self.width = width
-
+        
         # if mult_arity is just a scalar, we extend it to a list of lists
         # e.g, mult_arity = [[2,3],[4]] means that in the first hidden layer, 2 mult ops have arity 2 and 3, respectively;
         # in the second hidden layer, 1 mult op has arity 4.
         if isinstance(mult_arity, int):
             self.mult_homo = True # when homo is True, parallelization is possible
         else:
-            self.mult_homo = False # when home if False, for loop is required.
+            self.mult_homo = False # when home if False, for loop is required. 
         self.mult_arity = mult_arity
 
         width_in = self.width_in
         width_out = self.width_out
-
+        
         self.base_fun_name = base_fun
         if base_fun == 'silu':
             base_fun = torch.nn.SiLU()
@@ -191,27 +190,24 @@ class MatrixKAN(nn.Module):
             base_fun = torch.nn.Identity()
         elif base_fun == 'zero':
             base_fun = lambda x: x*0.
-
+            
         self.grid_eps = grid_eps
         self.grid_range = grid_range
-
-        self.spline_matrix = spline_matrix
+            
+        
         for l in range(self.depth):
             # splines
-            if spline_matrix:
-                sp_batch = MatrixKANLayer(in_dim=width_in[l], out_dim=width_out[l+1], num=grid, k=k, noise_scale=noise_scale, scale_base_mu=scale_base_mu, scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun, grid_eps=grid_eps, grid_range=grid_range, sp_trainable=sp_trainable, sb_trainable=sb_trainable, sparse_init=sparse_init, device=device)
-            else:
-                sp_batch = KANLayer(in_dim=width_in[l], out_dim=width_out[l+1], num=grid, k=k, noise_scale=noise_scale, scale_base_mu=scale_base_mu, scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun, grid_eps=grid_eps, grid_range=grid_range, sp_trainable=sp_trainable, sb_trainable=sb_trainable, sparse_init=sparse_init, device=device)
+            sp_batch = MatrixKANLayer(in_dim=width_in[l], out_dim=width_out[l+1], num=grid, k=k, noise_scale=noise_scale, scale_base_mu=scale_base_mu, scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun, grid_eps=grid_eps, grid_range=grid_range, sp_trainable=sp_trainable, sb_trainable=sb_trainable, sparse_init=sparse_init)
             self.act_fun.append(sp_batch)
 
         self.node_bias = []
         self.node_scale = []
         self.subnode_bias = []
         self.subnode_scale = []
-
+        
         globals()['self.node_bias_0'] = torch.nn.Parameter(torch.zeros(3,1)).requires_grad_(False)
         exec('self.node_bias_0' + " = torch.nn.Parameter(torch.zeros(3,1)).requires_grad_(False)")
-
+        
         for l in range(self.depth):
             exec(f'self.node_bias_{l} = torch.nn.Parameter(torch.zeros(width_in[l+1])).requires_grad_(affine_trainable)')
             exec(f'self.node_scale_{l} = torch.nn.Parameter(torch.ones(width_in[l+1])).requires_grad_(affine_trainable)')
@@ -221,10 +217,9 @@ class MatrixKAN(nn.Module):
             exec(f'self.node_scale.append(self.node_scale_{l})')
             exec(f'self.subnode_bias.append(self.subnode_bias_{l})')
             exec(f'self.subnode_scale.append(self.subnode_scale_{l})')
-
-
+            
+        
         self.act_fun = nn.ModuleList(self.act_fun)
-        # self.layer_norm = torch.nn.Tanh()
 
         self.grid = grid
         self.k = k
@@ -241,24 +236,24 @@ class MatrixKAN(nn.Module):
         self.affine_trainable = affine_trainable
         self.sp_trainable = sp_trainable
         self.sb_trainable = sb_trainable
-
+        
         self.save_act = save_act
-
+            
         self.node_scores = None
         self.edge_scores = None
         self.subnode_scores = None
-
+        
         self.cache_data = None
         self.acts = None
-
+        
         self.auto_save = auto_save
         self.state_id = 0
         self.ckpt_path = ckpt_path
         self.round = round
-
+        
         self.device = device
         self.to(device)
-
+        
         if auto_save:
             if first_init:
                 if not os.path.exists(ckpt_path):
@@ -274,13 +269,13 @@ class MatrixKAN(nn.Module):
                 self.saveckpt(path=self.ckpt_path+'/'+'0.0')
             else:
                 self.state_id = state_id
-
+            
         self.input_id = torch.arange(self.width_in[0],)
-
+        
     def to(self, device):
         '''
         move the model to device
-
+        
         Args:
         -----
             device : str or device
@@ -288,7 +283,7 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             self
-
+            
         Example
         -------
         >>> from kan import *
@@ -298,15 +293,15 @@ class MatrixKAN(nn.Module):
         '''
         super(MatrixKAN, self).to(device)
         self.device = device
-
+        
         for kanlayer in self.act_fun:
             kanlayer.to(device)
-
+            
         for symbolic_kanlayer in self.symbolic_fun:
             symbolic_kanlayer.to(device)
-
+            
         return self
-
+    
     @property
     def width_in(self):
         '''
@@ -315,7 +310,7 @@ class MatrixKAN(nn.Module):
         width = self.width
         width_in = [width[l][0]+width[l][1] for l in range(len(width))]
         return width_in
-
+        
     @property
     def width_out(self):
         '''
@@ -327,7 +322,7 @@ class MatrixKAN(nn.Module):
         else:
             width_out = [width[l][0]+int(np.sum(self.mult_arity[l])) for l in range(len(width))]
         return width_out
-
+    
     @property
     def n_sum(self):
         '''
@@ -336,7 +331,7 @@ class MatrixKAN(nn.Module):
         width = self.width
         n_sum = [width[l][0] for l in range(1,len(width)-1)]
         return n_sum
-
+    
     @property
     def n_mult(self):
         '''
@@ -345,7 +340,7 @@ class MatrixKAN(nn.Module):
         width = self.width
         n_mult = [width[l][1] for l in range(1,len(width)-1)]
         return n_mult
-
+    
     @property
     def feature_score(self):
         '''
@@ -359,9 +354,9 @@ class MatrixKAN(nn.Module):
 
     def initialize_from_another_model(self, another_model, x):
         '''
-        initialize from another model of the same width, but their 'grid' parameter can be different.
+        initialize from another model of the same width, but their 'grid' parameter can be different. 
         Note this is equivalent to refine() when we don't want to keep another_model
-
+        
         Args:
         -----
             another_model : MatrixKAN
@@ -370,7 +365,7 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             self
-
+            
         Example
         -------
         >>> from kan import *
@@ -399,7 +394,7 @@ class MatrixKAN(nn.Module):
         for l in range(self.depth):
             self.node_bias[l].data = another_model.node_bias[l].data
             self.node_scale[l].data = another_model.node_scale[l].data
-
+            
             self.subnode_bias[l].data = another_model.subnode_bias[l].data
             self.subnode_scale[l].data = another_model.subnode_scale[l].data
 
@@ -407,8 +402,8 @@ class MatrixKAN(nn.Module):
             self.symbolic_fun[l] = another_model.symbolic_fun[l]
 
         return self.to(self.device)
-
-    def log_history(self, method_name):
+    
+    def log_history(self, method_name): 
 
         if self.auto_save:
 
@@ -424,11 +419,11 @@ class MatrixKAN(nn.Module):
             self.saveckpt(path=self.ckpt_path+'/'+str(self.round)+'.'+str(self.state_id))
             print('saving model version '+str(self.round)+'.'+str(self.state_id))
 
-
+    
     def refine(self, new_grid):
         '''
         grid refinement
-
+        
         Args:
         -----
             new_grid : init
@@ -437,7 +432,7 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             a refined model : MatrixKAN
-
+            
         Example
         -------
         >>> from kan import *
@@ -456,14 +451,14 @@ class MatrixKAN(nn.Module):
         '''
 
         model_new = MatrixKAN(width=self.width,
-                     grid=new_grid,
-                     k=self.k,
-                     mult_arity=self.mult_arity,
-                     base_fun=self.base_fun_name,
-                     symbolic_enabled=self.symbolic_enabled,
-                     affine_trainable=self.affine_trainable,
-                     grid_eps=self.grid_eps,
-                     grid_range=self.grid_range,
+                     grid=new_grid, 
+                     k=self.k, 
+                     mult_arity=self.mult_arity, 
+                     base_fun=self.base_fun_name, 
+                     symbolic_enabled=self.symbolic_enabled, 
+                     affine_trainable=self.affine_trainable, 
+                     grid_eps=self.grid_eps, 
+                     grid_range=self.grid_range, 
                      sp_trainable=self.sp_trainable,
                      sb_trainable=self.sb_trainable,
                      ckpt_path=self.ckpt_path,
@@ -471,23 +466,22 @@ class MatrixKAN(nn.Module):
                      first_init=False,
                      state_id=self.state_id,
                      round=self.round,
-                     device=self.device,
-                     spline_matrix=self.spline_matrix)
-
+                     device=self.device)
+            
         model_new.initialize_from_another_model(self, self.cache_data)
         model_new.cache_data = self.cache_data
         model_new.grid = new_grid
-
+        
         self.log_history('refine')
         model_new.state_id += 1
-
+        
         return model_new.to(self.device)
-
-
+    
+    
     def saveckpt(self, path='model'):
         '''
         save the current model to files (configuration file and state file)
-
+        
         Args:
         -----
             path : str
@@ -496,7 +490,7 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             None
-
+            
         Example
         -------
         >>> from kan import *
@@ -505,9 +499,9 @@ class MatrixKAN(nn.Module):
         >>> model.saveckpt('./mark')
         # There will be three files appearing in the current folder: mark_cache_data, mark_config.yml, mark_state
         '''
-
+    
         model = self
-
+        
         dic = dict(
             width = model.width,
             grid = model.grid,
@@ -524,8 +518,7 @@ class MatrixKAN(nn.Module):
             auto_save = model.auto_save,
             ckpt_path = model.ckpt_path,
             round = model.round,
-            device = str(model.device),
-            spline_matrix = model.spline_matrix
+            device = str(model.device)
         )
 
         for i in range (model.depth):
@@ -536,12 +529,12 @@ class MatrixKAN(nn.Module):
 
         torch.save(model.state_dict(), f'{path}_state')
         torch.save(model.cache_data, f'{path}_cache_data')
-
+    
     @staticmethod
     def loadckpt(path='model'):
         '''
         load checkpoint from path
-
+        
         Args:
         -----
             path : str
@@ -550,7 +543,7 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             MatrixKAN
-
+            
         Example
         -------
         >>> from kan import *
@@ -564,14 +557,14 @@ class MatrixKAN(nn.Module):
         state = torch.load(f'{path}_state')
 
         model_load = MatrixKAN(width=config['width'],
-                     grid=config['grid'],
-                     k=config['k'],
-                     mult_arity = config['mult_arity'],
-                     base_fun=config['base_fun_name'],
-                     symbolic_enabled=config['symbolic_enabled'],
-                     affine_trainable=config['affine_trainable'],
-                     grid_eps=config['grid_eps'],
-                     grid_range=config['grid_range'],
+                     grid=config['grid'], 
+                     k=config['k'], 
+                     mult_arity = config['mult_arity'], 
+                     base_fun=config['base_fun_name'], 
+                     symbolic_enabled=config['symbolic_enabled'], 
+                     affine_trainable=config['affine_trainable'], 
+                     grid_eps=config['grid_eps'], 
+                     grid_range=config['grid_range'], 
                      sp_trainable=config['sp_trainable'],
                      sb_trainable=config['sb_trainable'],
                      state_id=config['state_id'],
@@ -579,12 +572,11 @@ class MatrixKAN(nn.Module):
                      first_init=False,
                      ckpt_path=config['ckpt_path'],
                      round = config['round']+1,
-                     device = config['device'],
-                     spline_matrix=config['spline_matrix'])
+                     device = config['device'])
 
         model_load.load_state_dict(state)
         model_load.cache_data = torch.load(f'{path}_cache_data')
-
+        
         depth = len(model_load.width) - 1
         for l in range(depth):
             out_dim = model_load.symbolic_fun[l].out_dim
@@ -598,11 +590,11 @@ class MatrixKAN(nn.Module):
                     model_load.symbolic_fun[l].funs_sympy[j][i] = SYMBOLIC_LIB[fun_name][1]
                     model_load.symbolic_fun[l].funs_avoid_singularity[j][i] = SYMBOLIC_LIB[fun_name][3]
         return model_load
-
+    
     def copy(self):
         '''
         deepcopy
-
+        
         Args:
         -----
             path : str
@@ -611,7 +603,7 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             MatrixKAN
-
+            
         Example
         -------
         >>> from kan import *
@@ -623,62 +615,62 @@ class MatrixKAN(nn.Module):
         '''
         path='copy_temp'
         self.saveckpt(path)
-        return KAN.loadckpt(path)
-
+        return MatrixKAN.loadckpt(path)
+    
     def rewind(self, model_id):
         '''
         rewind to an old version
-
+        
         Args:
         -----
             model_id : str
-                in format '{a}.{b}' where a is the round number, b is the version number in that round
+                in format '{a}.{b}' where a is the round number, b is the version number in that round 
 
         Returns:
         --------
             MatrixKAN
-
+            
         Example
         -------
         Please refer to tutorials. API 12: Checkpoint, save & load model
-        '''
+        ''' 
         self.round += 1
         self.state_id = model_id.split('.')[-1]
-
+        
         history_path = self.ckpt_path+'/history.txt'
         with open(history_path, 'a') as file:
             file.write(f'### Round {self.round} ###' + '\n')
 
         self.saveckpt(path=self.ckpt_path+'/'+f'{self.round}.{self.state_id}')
-
+        
         print('rewind to model version '+f'{self.round-1}.{self.state_id}'+', renamed as '+f'{self.round}.{self.state_id}')
 
         return MatrixKAN.loadckpt(path=self.ckpt_path+'/'+str(model_id))
-
-
+    
+    
     def checkout(self, model_id):
         '''
         check out an old version
-
+        
         Args:
         -----
             model_id : str
-                in format '{a}.{b}' where a is the round number, b is the version number in that round
+                in format '{a}.{b}' where a is the round number, b is the version number in that round 
 
         Returns:
         --------
             MatrixKAN
-
+            
         Example
         -------
         Same use as rewind, although checkout doesn't change states
-        '''
+        ''' 
         return MatrixKAN.loadckpt(path=self.ckpt_path+'/'+str(model_id))
-
+    
     def update_grid_from_samples(self, x):
         '''
         update grid from samples
-
+        
         Args:
         -----
             x : 2D torch.tensor
@@ -687,7 +679,7 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             None
-
+            
         Example
         -------
         >>> from kan import *
@@ -696,14 +688,11 @@ class MatrixKAN(nn.Module):
         >>> x = torch.linspace(-10,10,steps=101)[:,None]
         >>> model.update_grid_from_samples(x)
         >>> print(model.act_fun[0].grid)
-        '''
+        ''' 
         for l in range(self.depth):
             self.get_act(x)
-            if self.spline_matrix:
-                self.act_fun[l].update_grid_from_samples_uniform(self.acts[l])
-            else:
-                self.act_fun[l].update_grid_from_samples(self.acts[l])
-
+            self.act_fun[l].update_grid_from_samples(self.acts[l])
+            
     def update_grid(self, x):
         '''
         call update_grid_from_samples. This seems unnecessary but we retain it for the sake of classes that might inherit from MatrixKAN
@@ -713,7 +702,7 @@ class MatrixKAN(nn.Module):
     def initialize_grid_from_another_model(self, model, x):
         '''
         initialize grid from another model
-
+        
         Args:
         -----
             model : MatrixKAN
@@ -724,7 +713,7 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             None
-
+            
         Example
         -------
         >>> from kan import *
@@ -742,7 +731,7 @@ class MatrixKAN(nn.Module):
     def forward(self, x, singularity_avoiding=False, y_th=10.):
         '''
         forward pass
-
+        
         Args:
         -----
             x : 2D torch.tensor
@@ -755,14 +744,14 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             None
-
+            
         Example1
         --------
         >>> from kan import *
         >>> model = KAN(width=[2,5,1], grid=5, k=3, seed=0)
         >>> x = torch.rand(100,2)
         >>> model(x).shape
-
+        
         Example2
         --------
         >>> from kan import *
@@ -775,10 +764,10 @@ class MatrixKAN(nn.Module):
         '''
         x = x[:,self.input_id.long()]
         assert x.shape[1] == self.width_in[0]
-
+        
         # cache data
         self.cache_data = x
-
+        
         self.acts = []  # shape ([batch, n0], [batch, n1], ..., [batch, n_L])
         self.acts_premult = []
         self.spline_preacts = []
@@ -793,9 +782,10 @@ class MatrixKAN(nn.Module):
         self.acts.append(x)  # acts shape: (batch, width[l])
 
         for l in range(self.depth):
-
+            
             x_numerical, preacts, postacts_numerical, postspline = self.act_fun[l](x)
-
+            #print(preacts, postacts_numerical, postspline)
+            
             if self.symbolic_enabled == True:
                 x_symbolic, postacts_symbolic = self.symbolic_fun[l](x, singularity_avoiding=singularity_avoiding, y_th=y_th)
             else:
@@ -803,14 +793,14 @@ class MatrixKAN(nn.Module):
                 postacts_symbolic = 0.
 
             x = x_numerical + x_symbolic
-
+            
             if self.save_act:
                 # save subnode_scale
                 self.subnode_actscale.append(torch.std(x, dim=0).detach())
-
+            
             # subnode affine transform
             x = self.subnode_scale[l][None,:] * x + self.subnode_bias[l][None,:]
-
+            
             if self.save_act:
                 postacts = postacts_numerical + postacts_symbolic
 
@@ -821,7 +811,7 @@ class MatrixKAN(nn.Module):
                 output_range = torch.std(postacts, dim=0) # for visualization, include the contribution from both spline + symbolic
                 # save edge_scale
                 self.edge_actscale.append(output_range)
-
+                
                 self.acts_scale.append((output_range / input_range).detach())
                 self.acts_scale_spline.append(output_range_spline / input_range)
                 self.spline_preacts.append(preacts.detach())
@@ -829,18 +819,18 @@ class MatrixKAN(nn.Module):
                 self.spline_postsplines.append(postspline.detach())
 
                 self.acts_premult.append(x.detach())
-
+            
             # multiplication
             dim_sum = self.width[l+1][0]
             dim_mult = self.width[l+1][1]
-
+            
             if self.mult_homo == True:
                 for i in range(self.mult_arity-1):
                     if i == 0:
                         x_mult = x[:,dim_sum::self.mult_arity] * x[:,dim_sum+1::self.mult_arity]
                     else:
                         x_mult = x_mult * x[:,dim_sum+i+1::self.mult_arity]
-
+                        
             else:
                 for j in range(dim_mult):
                     acml_id = dim_sum + np.sum(self.mult_arity[l+1][:j])
@@ -849,22 +839,22 @@ class MatrixKAN(nn.Module):
                             x_mult_j = x[:,[acml_id]] * x[:,[acml_id+1]]
                         else:
                             x_mult_j = x_mult_j * x[:,[acml_id+i+1]]
-
+                            
                     if j == 0:
                         x_mult = x_mult_j
                     else:
                         x_mult = torch.cat([x_mult, x_mult_j], dim=1)
-
+                
             if self.width[l+1][1] > 0:
                 x = torch.cat([x[:,:dim_sum], x_mult], dim=1)
-
+            
             # x = x + self.biases[l].weight
             # node affine transform
             x = self.node_scale[l][None,:] * x + self.node_bias[l][None,:]
-
+            
             self.acts.append(x.detach())
-
-
+            
+        
         return x
 
     def set_mode(self, l, i, j, mode, mask_n=None):
@@ -890,7 +880,7 @@ class MatrixKAN(nn.Module):
     def fix_symbolic(self, l, i, j, fun_name, fit_params_bool=True, a_range=(-10, 10), b_range=(-10, 10), verbose=True, random=False, log_history=True):
         '''
         set (l,i,j) activation to be symbolic (specified by fun_name)
-
+        
         Args:
         -----
             l : int
@@ -913,19 +903,19 @@ class MatrixKAN(nn.Module):
                 initialize affine parameteres randomly or as [1,0,1,0]
             log_history : bool
                 indicate whether to log history when the function is called
-
+        
         Returns:
         --------
             None or r2 (coefficient of determination)
-
-        Example 1
+            
+        Example 1 
         ---------
         >>> # when fit_params_bool = False
         >>> model = KAN(width=[2,5,1], grid=5, k=3)
         >>> model.fix_symbolic(0,1,3,'sin',fit_params_bool=False)
         >>> print(model.act_fun[0].mask.reshape(2,5))
         >>> print(model.symbolic_fun[0].mask.reshape(2,5))
-
+                    
         Example 2
         ---------
         >>> # when fit_params_bool = True
@@ -948,7 +938,7 @@ class MatrixKAN(nn.Module):
             if mask[i,j] == 0:
                 r2 = - 1e8
         self.set_mode(l, i, j, mode="s")
-
+        
         if log_history:
             self.log_history('fix_symbolic')
         return r2
@@ -974,7 +964,7 @@ class MatrixKAN(nn.Module):
     def get_range(self, l, i, j, verbose=True):
         '''
         Get the input range and output range of the (l,i,j) activation
-
+        
         Args:
         -----
             l : int
@@ -983,7 +973,7 @@ class MatrixKAN(nn.Module):
                 input neuron index
             j : int
                 output neuron index
-
+        
         Returns:
         --------
             x_min : float
@@ -994,7 +984,7 @@ class MatrixKAN(nn.Module):
                 minimum of output
             y_max : float
                 maximum of output
-
+        
         Example
         -------
         >>> model = KAN(width=[2,3,1], grid=5, k=3, noise_scale=1.)
@@ -1015,8 +1005,8 @@ class MatrixKAN(nn.Module):
 
     def plot(self, folder="./figures", beta=3, metric='backward', scale=0.5, tick=False, sample=False, in_vars=None, out_vars=None, title=None, varscale=1.0):
         '''
-        plot KAN
-
+        plot MatrixKAN
+        
         Args:
         -----
             folder : str
@@ -1037,11 +1027,11 @@ class MatrixKAN(nn.Module):
                 title
             varscale : float
                 the size of input variables
-
+            
         Returns:
         --------
             Figure
-
+            
         Example
         -------
         >>> # see more interactive examples in demos
@@ -1051,20 +1041,20 @@ class MatrixKAN(nn.Module):
         >>> model.plot()
         '''
         global Symbol
-
+        
         if not self.save_act:
             print('cannot plot since data are not saved. Set save_act=True first.')
-
+        
         # forward to obtain activations
         if self.acts == None:
             if self.cache_data == None:
                 raise Exception('model hasn\'t seen any data yet.')
             self.forward(self.cache_data)
-
+            
         if metric == 'backward':
             self.attribute()
-
-
+            
+        
         if not os.path.exists(folder):
             os.makedirs(folder)
         # matplotlib.use('Agg')
@@ -1094,7 +1084,7 @@ class MatrixKAN(nn.Module):
                     if symbolic_mask == 0. and numeric_mask == 0.:
                         color = "white"
                         alpha_mask = 0
-
+                        
 
                     if tick == True:
                         ax.tick_params(axis="y", direction="in", pad=-22, labelsize=50)
@@ -1123,7 +1113,7 @@ class MatrixKAN(nn.Module):
         def score2alpha(score):
             return np.tanh(beta * score)
 
-
+        
         if metric == 'forward_n':
             scores = self.acts_scale
         elif metric == 'forward_u':
@@ -1132,9 +1122,9 @@ class MatrixKAN(nn.Module):
             scores = self.edge_scores
         else:
             raise Exception(f'metric = \'{metric}\' not recognized')
-
+        
         alpha = [score2alpha(score.cpu().detach().numpy()) for score in scores]
-
+            
         # draw skeleton
         width = np.array(self.width)
         width_in = np.array(self.width_in)
@@ -1159,16 +1149,16 @@ class MatrixKAN(nn.Module):
         FC_to_NFC = fig.transFigure.inverted().transform
         # -- Take data coordinates and transform them to normalized figure coordinates
         DC_to_NFC = lambda x: FC_to_NFC(DC_to_FC(x))
-
+        
         # plot scatters and lines
         for l in range(neuron_depth):
-
+            
             n = width_in[l]
-
+            
             # scatters
             for i in range(n):
                 plt.scatter(1 / (2 * n) + i / n, l * (y0+z0), s=min_spacing ** 2 * 10000 * scale ** 2, color='black')
-
+                
             # plot connections (input to pre-mult)
             for i in range(n):
                 if l < neuron_depth - 1:
@@ -1191,11 +1181,11 @@ class MatrixKAN(nn.Module):
                         if symbol_mask == 0. and numerical_mask == 0.:
                             color = "white"
                             alpha_mask = 0.
-
+                        
                         plt.plot([1 / (2 * n) + i / n, 1 / (2 * N) + id_ / N], [l * (y0+z0), l * (y0+z0) + y0/2 - y1], color=color, lw=2 * scale, alpha=alpha[l][j][i] * alpha_mask)
                         plt.plot([1 / (2 * N) + id_ / N, 1 / (2 * n_next) + j / n_next], [l * (y0+z0) + y0/2 + y1, l * (y0+z0)+y0], color=color, lw=2 * scale, alpha=alpha[l][j][i] * alpha_mask)
-
-
+                            
+                            
             # plot connections (pre-mult to post-mult, post-mult = next-layer input)
             if l < neuron_depth - 1:
                 n_in = width_out[l+1]
@@ -1223,8 +1213,8 @@ class MatrixKAN(nn.Module):
                         #j = (i-width[l+1][0])//self.mult_arity + width[l+1][0]
                     plt.plot([1 / (2 * n_in) + i / n_in, 1 / (2 * n_out) + j / n_out], [l * (y0+z0) + y0, (l+1) * (y0+z0)], color='black', lw=2 * scale)
 
-
-
+                    
+                    
             plt.xlim(0, 1)
             plt.ylim(-0.1 * (y0+z0), (neuron_depth - 1 + 0.1) * (y0+z0))
 
@@ -1248,8 +1238,8 @@ class MatrixKAN(nn.Module):
                     # newax = fig.add_axes([1/(2*N)+id_/N-y1, (l+1/2)*y0-y1, y1, y1], anchor='NE')
                     newax.imshow(im, alpha=alpha[l][j][i])
                     newax.axis('off')
-
-
+                    
+              
             # plot sum symbols
             N = n = width_out[l+1]
             for j in range(n):
@@ -1263,7 +1253,7 @@ class MatrixKAN(nn.Module):
                 newax = fig.add_axes([left, bottom, right - left, up - bottom])
                 newax.imshow(im)
                 newax.axis('off')
-
+                
             # plot mult symbols
             N = n = width_in[l+1]
             n_sum = width[l+1][0]
@@ -1287,8 +1277,8 @@ class MatrixKAN(nn.Module):
                     plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), -0.1, f'${latex(in_vars[i])}$', fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
                 else:
                     plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), -0.1, in_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
-
-
+                
+                
 
         if out_vars != None:
             n = self.width_in[-1]
@@ -1301,11 +1291,11 @@ class MatrixKAN(nn.Module):
         if title != None:
             plt.gcf().get_axes()[0].text(0.5, (y0+z0) * (len(self.width) - 1) + 0.3, title, fontsize=40 * scale, horizontalalignment='center', verticalalignment='center')
 
-
+            
     def reg(self, reg_metric, lamb_l1, lamb_entropy, lamb_coef, lamb_coefdiff):
         '''
         Get regularization
-
+        
         Args:
         -----
             reg_metric : the regularization metric
@@ -1318,11 +1308,11 @@ class MatrixKAN(nn.Module):
                 coefficient penalty strength
             lamb_coefdiff : float
                 coefficient smoothness strength
-
+        
         Returns:
         --------
             reg_ : torch.float
-
+        
         Example
         -------
         >>> model = KAN(width=[2,3,1], grid=5, k=3, noise_scale=1.)
@@ -1332,22 +1322,22 @@ class MatrixKAN(nn.Module):
         '''
         if reg_metric == 'edge_forward_spline_n':
             acts_scale = self.acts_scale_spline
-
+            
         elif reg_metric == 'edge_forward_sum':
             acts_scale = self.acts_scale
-
+            
         elif reg_metric == 'edge_forward_spline_u':
             acts_scale = self.edge_actscale
-
+            
         elif reg_metric == 'edge_backward':
             acts_scale = self.edge_scores
-
+            
         elif reg_metric == 'node_backward':
             acts_scale = self.node_attribute_scores
-
+            
         else:
             raise Exception(f'reg_metric = {reg_metric} not recognized!')
-
+        
         reg_ = 0.
         for i in range(len(acts_scale)):
             vec = acts_scale[i]
@@ -1366,13 +1356,13 @@ class MatrixKAN(nn.Module):
             reg_ += lamb_coef * coeff_l1 + lamb_coefdiff * coeff_diff_l1
 
         return reg_
-
+    
     def get_reg(self, reg_metric, lamb_l1, lamb_entropy, lamb_coef, lamb_coefdiff):
         '''
         Get regularization. This seems unnecessary but in case a class wants to inherit this, it may want to rewrite get_reg, but not reg.
         '''
         return self.reg(reg_metric, lamb_l1, lamb_entropy, lamb_coef, lamb_coefdiff)
-
+    
     def disable_symbolic_in_fit(self, lamb):
         '''
         during fitting, disable symbolic if either is true (lamb = 0, none of symbolic functions is active)
@@ -1380,7 +1370,7 @@ class MatrixKAN(nn.Module):
         old_save_act = self.save_act
         if lamb == 0.:
             self.save_act = False
-
+            
         # skip symbolic if no symbolic is turned on
         depth = len(self.symbolic_fun)
         no_symbolic = True
@@ -1391,16 +1381,16 @@ class MatrixKAN(nn.Module):
 
         if no_symbolic:
             self.symbolic_enabled = False
-
+            
         return old_save_act, old_symbolic_enabled
-
+    
     def get_params(self):
         '''
         Get parameters
         '''
         return self.parameters()
-
-
+        
+            
     def fit(self, dataset, opt="LBFGS", steps=100, log=1, lamb=0., lamb_l1=1., lamb_entropy=2., lamb_coef=0., lamb_coefdiff=0., update_grid=True, grid_update_num=10, loss_fn=None, lr=1.,start_grid_update_step=-1, stop_grid_update_step=50, batch=-1,
               metrics=None, save_fig=False, in_vars=None, out_vars=None, beta=3, save_fig_freq=1, img_folder='./video', singularity_avoiding=False, y_th=1000., reg_metric='edge_forward_spline_n', display_metrics=None):
         '''
@@ -1474,7 +1464,7 @@ class MatrixKAN(nn.Module):
 
         if lamb > 0. and not self.save_act:
             print('setting lamb=0. If you want to set lamb > 0, set self.save_act=True')
-
+            
         old_save_act, old_symbolic_enabled = self.disable_symbolic_in_fit(lamb)
 
         pbar = tqdm(range(steps), desc='description', ncols=100)
@@ -1490,6 +1480,8 @@ class MatrixKAN(nn.Module):
             optimizer = torch.optim.Adam(self.get_params(), lr=lr)
         elif opt == "LBFGS":
             optimizer = LBFGS(self.get_params(), lr=lr, history_size=10, line_search_fn="strong_wolfe", tolerance_grad=1e-32, tolerance_change=1e-32, tolerance_ys=1e-32)
+        elif opt == "AdamW":
+            optimizer = torch.optim.AdamW(self.get_params(), lr=lr, weight_decay=1e-4)
 
         results = {}
         results['train_loss'] = []
@@ -1530,10 +1522,10 @@ class MatrixKAN(nn.Module):
                 os.makedirs(img_folder)
 
         for _ in pbar:
-
+            
             if _ == steps-1 and old_save_act:
                 self.save_act = True
-
+            
             train_id = np.random.choice(dataset['train_input'].shape[0], batch_size, replace=False)
             test_id = np.random.choice(dataset['test_input'].shape[0], batch_size_test, replace=False)
 
@@ -1543,7 +1535,7 @@ class MatrixKAN(nn.Module):
             if opt == "LBFGS":
                 optimizer.step(closure)
 
-            if opt == "Adam":
+            if opt == "Adam" or opt == "AdamW":
                 pred = self.forward(dataset['train_input'][train_id], singularity_avoiding=singularity_avoiding, y_th=y_th)
                 train_loss = loss_fn(pred, dataset['train_label'][train_id])
                 if self.save_act:
@@ -1560,8 +1552,8 @@ class MatrixKAN(nn.Module):
                 optimizer.step()
 
             test_loss = loss_fn_eval(self.forward(dataset['test_input'][test_id]), dataset['test_label'][test_id])
-
-
+            
+            
             if metrics != None:
                 for i in range(len(metrics)):
                     results[metrics[i].__name__].append(metrics[i]().item())
@@ -1584,8 +1576,8 @@ class MatrixKAN(nn.Module):
                             raise Exception(f'{metric} not recognized')
                         data += (results[metric][-1],)
                     pbar.set_description(string % data)
-
-
+                    
+            
             if save_fig and _ % save_fig_freq == 0:
                 self.plot(folder=img_folder, in_vars=in_vars, out_vars=out_vars, title="Step {}".format(_), beta=beta)
                 plt.savefig(img_folder + '/' + str(_) + '.jpg', bbox_inches='tight', dpi=200)
@@ -1606,7 +1598,7 @@ class MatrixKAN(nn.Module):
                 if the attribution score of a neuron is below the threshold, it is considered dead and will be removed
             mode : str
                 'auto' or 'manual'. with 'auto', nodes are automatically pruned using threshold. with 'manual', active_neurons_id should be passed in.
-
+            
         Returns:
         --------
             pruned network : MatrixKAN
@@ -1623,7 +1615,7 @@ class MatrixKAN(nn.Module):
         '''
         if self.acts == None:
             self.get_act()
-
+        
         mask_up = [torch.ones(self.width_in[0], device=self.device)]
         mask_down = []
         active_neurons_up = [list(range(self.width_in[0]))]
@@ -1631,23 +1623,23 @@ class MatrixKAN(nn.Module):
         num_sums = []
         num_mults = []
         mult_arities = [[]]
-
+        
         if active_neurons_id != None:
             mode = "manual"
 
         for i in range(len(self.acts_scale) - 1):
-
+            
             mult_arity = []
-
+            
             if mode == "auto":
                 self.attribute()
                 overall_important_up = self.node_scores[i+1] > threshold
-
+                
             elif mode == "manual":
                 overall_important_up = torch.zeros(self.width_in[i + 1], dtype=torch.bool, device=self.device)
                 overall_important_up[active_neurons_id[i]] = True
-
-
+                
+                
             num_sum = torch.sum(overall_important_up[:self.width[i+1][0]])
             num_mult = torch.sum(overall_important_up[self.width[i+1][0]:])
             if self.mult_homo == True:
@@ -1660,7 +1652,7 @@ class MatrixKAN(nn.Module):
                     overall_important_down = torch.cat([overall_important_down, torch.tensor([active_bool]*arity).to(self.device)])
                     if active_bool:
                         mult_arity.append(arity)
-
+            
             num_sums.append(num_sum.item())
             num_mults.append(num_mult.item())
 
@@ -1669,12 +1661,12 @@ class MatrixKAN(nn.Module):
 
             active_neurons_up.append(torch.where(overall_important_up == True)[0])
             active_neurons_down.append(torch.where(overall_important_down == True)[0])
-
+            
             mult_arities.append(mult_arity)
 
         active_neurons_down.append(list(range(self.width_out[-1])))
         mask_down.append(torch.ones(self.width_out[-1], device=self.device))
-
+        
         if self.mult_homo == False:
             mult_arities.append(self.mult_arity[-1])
 
@@ -1686,18 +1678,18 @@ class MatrixKAN(nn.Module):
             for i in range(self.width_in[l + 1]):
                 if i not in active_neurons_up[l + 1]:
                     self.remove_node(l + 1, i, mode='up',log_history=False)
-
+                    
             for i in range(self.width_out[l + 1]):
                 if i not in active_neurons_down[l]:
                     self.remove_node(l + 1, i, mode='down',log_history=False)
 
         model2 = MatrixKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun_name, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round).to(self.device)
         model2.load_state_dict(self.state_dict())
-
+        
         width_new = [self.width[0]]
-
+        
         for i in range(len(self.acts_scale)):
-
+            
             if i < len(self.acts_scale) - 1:
                 num_sum = num_sums[i]
                 num_mult = num_mults[i]
@@ -1706,33 +1698,33 @@ class MatrixKAN(nn.Module):
                 model2.subnode_bias[i].data = model2.subnode_bias[i].data[active_neurons_down[i]]
                 model2.subnode_scale[i].data = model2.subnode_scale[i].data[active_neurons_down[i]]
                 model2.width[i+1] = [num_sum, num_mult]
-
+                
                 model2.act_fun[i].out_dim_sum = num_sum
                 model2.act_fun[i].out_dim_mult = num_mult
-
+                
                 model2.symbolic_fun[i].out_dim_sum = num_sum
                 model2.symbolic_fun[i].out_dim_mult = num_mult
-
+                
                 width_new.append([num_sum, num_mult])
 
             model2.act_fun[i] = model2.act_fun[i].get_subset(active_neurons_up[i], active_neurons_down[i])
             model2.symbolic_fun[i] = self.symbolic_fun[i].get_subset(active_neurons_up[i], active_neurons_down[i])
-
+            
         model2.cache_data = self.cache_data
         model2.acts = None
-
+        
         width_new.append(self.width[-1])
         model2.width = width_new
-
+        
         if self.mult_homo == False:
             model2.mult_arity = mult_arities
-
+        
         if log_history:
-            self.log_history('prune_node')
+            self.log_history('prune_node')    
             model2.state_id += 1
-
+        
         return model2
-
+    
     def prune_edge(self, threshold=3e-2, log_history=True):
         '''
         pruning edges
@@ -1741,7 +1733,7 @@ class MatrixKAN(nn.Module):
         -----
             threshold : float
                 if the attribution score of an edge is below the threshold, it is considered dead and will be set to zero.
-
+            
         Returns:
         --------
             pruned network : MatrixKAN
@@ -1758,15 +1750,15 @@ class MatrixKAN(nn.Module):
         '''
         if self.acts == None:
             self.get_act()
-
+        
         for i in range(len(self.width)-1):
             #self.act_fun[i].mask.data = ((self.acts_scale[i] > threshold).permute(1,0)).float()
             old_mask = self.act_fun[i].mask.data
             self.act_fun[i].mask.data = ((self.edge_scores[i] > threshold).permute(1,0)*old_mask).float()
-
+            
         if log_history:
             self.log_history('fix_symbolic')
-
+    
     def prune(self, node_th=1e-2, edge_th=3e-2):
         '''
         prune (both nodes and edges)
@@ -1777,7 +1769,7 @@ class MatrixKAN(nn.Module):
                 if the attribution score of a node is below node_th, it is considered dead and will be set to zero.
             edge_th : float
                 if the attribution score of an edge is below node_th, it is considered dead and will be set to zero.
-
+            
         Returns:
         --------
             pruned network : MatrixKAN
@@ -1794,15 +1786,16 @@ class MatrixKAN(nn.Module):
         '''
         if self.acts == None:
             self.get_act()
-
+        
         self = self.prune_node(node_th, log_history=False)
         #self.prune_node(node_th, log_history=False)
+        self.to(self.device)
         self.forward(self.cache_data)
         self.attribute()
         self.prune_edge(edge_th, log_history=False)
         self.log_history('prune')
         return self
-
+    
     def prune_input(self, threshold=1e-2, active_inputs=None, log_history=True):
         '''
         prune inputs
@@ -1813,7 +1806,7 @@ class MatrixKAN(nn.Module):
                 if the attribution score of the input feature is below threshold, it is considered irrelevant.
             active_inputs : None or list
                 if a list is passed, the manual mode will disregard attribution score and prune as instructed.
-
+            
         Returns:
         --------
             pruned network : MatrixKAN
@@ -1829,7 +1822,7 @@ class MatrixKAN(nn.Module):
         >>> model.plot()
         >>> model = model.prune_input()
         >>> model.plot()
-
+        
         Example2
         --------
         >>> # automatic
@@ -1848,10 +1841,10 @@ class MatrixKAN(nn.Module):
             input_mask = input_score > threshold
             print('keep:', input_mask.tolist())
             input_id = torch.where(input_mask==True)[0]
-
+            
         else:
             input_id = torch.tensor(active_inputs, dtype=torch.long).to(self.device)
-
+        
         model2 = MatrixKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round).to(self.device)
         model2.load_state_dict(self.state_dict())
 
@@ -1863,11 +1856,11 @@ class MatrixKAN(nn.Module):
 
         model2.width[0] = [len(input_id), 0]
         model2.input_id = input_id
-
+        
         if log_history:
             self.log_history('prune_input')
             model2.state_id += 1
-
+        
         return model2
 
     def remove_edge(self, l, i, j, log_history=True):
@@ -1889,15 +1882,15 @@ class MatrixKAN(nn.Module):
         elif mode == 'up':
             self.act_fun[l].mask[i, :] = 0.
             self.symbolic_fun[l].mask[:, i] *= 0.
-
+            
         else:
             self.remove_node(l, i, mode='up')
             self.remove_node(l, i, mode='down')
-
+            
         if log_history:
             self.log_history('remove_node')
-
-
+            
+            
     def attribute(self, l=None, i=None, out_score=None, plot=True):
         '''
         get attribution scores
@@ -1912,7 +1905,7 @@ class MatrixKAN(nn.Module):
                 specify output scores
             plot : bool
                 when plot = True, display the bar show
-
+            
         Returns:
         --------
             attribution scores
@@ -1928,11 +1921,11 @@ class MatrixKAN(nn.Module):
         >>> model.feature_score
         '''
         # output (out_dim, in_dim)
-
+        
         if l != None:
             self.attribute()
             out_score = self.node_scores[l]
-
+       
         if self.acts == None:
             self.get_act()
 
@@ -1963,7 +1956,7 @@ class MatrixKAN(nn.Module):
         node_scores = []
         subnode_scores = []
         edge_scores = []
-
+        
         l_query = l
         if l == None:
             l_end = self.depth
@@ -1977,12 +1970,12 @@ class MatrixKAN(nn.Module):
         else:
             node_score = torch.diag(out_score).requires_grad_(True)
         node_scores.append(node_score)
-
+        
         device = self.act_fun[0].grid.device
 
         for l in range(l_end,0,-1):
 
-            # node to subnode
+            # node to subnode 
             if isinstance(self.mult_arity, int):
                 subnode_score = score_node2subnode(node_score, self.width[l], self.mult_arity, out_dim=out_dim)
             else:
@@ -2013,7 +2006,7 @@ class MatrixKAN(nn.Module):
             if i == None:
                 return self.node_scores_all[0]
             else:
-
+                
                 # plot
                 if plot:
                     in_dim = self.width_in[0]
@@ -2022,13 +2015,13 @@ class MatrixKAN(nn.Module):
                     plt.xticks(range(in_dim));
 
                 return self.node_scores_all[0][i]
-
+            
     def node_attribute(self):
         self.node_attribute_scores = []
         for l in range(1, self.depth+1):
             node_attr = self.attribute(l)
             self.node_attribute_scores.append(node_attr)
-
+            
     def feature_interaction(self, l, neuron_th = 1e-2, feature_th = 1e-2):
         '''
         get feature interaction
@@ -2041,7 +2034,7 @@ class MatrixKAN(nn.Module):
                 threshold to determine whether a neuron is active
             feature_th : float
                 threshold to determine whether a feature is active
-
+            
         Returns:
         --------
             dictionary
@@ -2099,8 +2092,8 @@ class MatrixKAN(nn.Module):
                 function : c -> 'bits'
             weight_simple : float
                 the simplifty weight: the higher, more prefer simplicity over performance
-
-
+            
+            
         Returns:
         --------
             best_name (str), best_fun (function), best_r2 (float), best_c (float)
@@ -2116,7 +2109,7 @@ class MatrixKAN(nn.Module):
         '''
         r2s = []
         cs = []
-
+        
         if lib == None:
             symbolic_lib = SYMBOLIC_LIB
         else:
@@ -2139,18 +2132,18 @@ class MatrixKAN(nn.Module):
         cs = np.array(cs)
         r2_loss = r2_loss_fun(r2s).astype('float')
         cs_loss = c_loss_fun(cs)
-
+        
         loss = weight_simple * cs_loss + (1-weight_simple) * r2_loss
-
+            
         sorted_ids = np.argsort(loss)[:topk]
         r2s = r2s[sorted_ids][:topk]
         cs = cs[sorted_ids][:topk]
         r2_loss = r2_loss[sorted_ids][:topk]
         cs_loss = cs_loss[sorted_ids][:topk]
         loss = loss[sorted_ids][:topk]
-
+        
         topk = np.minimum(topk, len(symbolic_lib))
-
+        
         if verbose == True:
             # print results in a dataframe
             results = {}
@@ -2168,7 +2161,7 @@ class MatrixKAN(nn.Module):
         best_fun = list(symbolic_lib.items())[sorted_ids[0]][1]
         best_r2 = r2s[0]
         best_c = cs[0]
-
+            
         return best_name, best_fun, best_r2, best_c;
 
     def auto_symbolic(self, a_range=(-10, 10), b_range=(-10, 10), lib=None, verbose=1, weight_simple = 0.8, r2_threshold=0.0):
@@ -2218,7 +2211,7 @@ class MatrixKAN(nn.Module):
                                 print(f'fixing ({l},{i},{j}) with {name}, r2={r2}, c={c}')
                         else:
                             print(f'For ({l},{i},{j}) the best fit was {name}, but r^2 = {r2} and this is lower than {r2_threshold}. This edge was omitted, keep training or try a different threshold.')
-
+                            
         self.log_history('auto_symbolic')
 
     def symbolic_formula(self, var=None, normalizer=None, output_normalizer = None):
@@ -2231,7 +2224,7 @@ class MatrixKAN(nn.Module):
                 input variables
             normalizer : [mean, std]
             output_normalizer : [mean, std]
-
+            
         Returns:
         --------
             None
@@ -2246,7 +2239,7 @@ class MatrixKAN(nn.Module):
         >>> model.auto_symbolic()
         >>> model.symbolic_formula()[0][0]
         '''
-
+        
         symbolic_acts = []
         symbolic_acts_premult = []
         x = []
@@ -2296,9 +2289,9 @@ class MatrixKAN(nn.Module):
                     y.append(sympy.simplify(yj))
                 else:
                     y.append(yj)
-
+                    
             symbolic_acts_premult.append(y)
-
+                  
             mult = []
             for k in range(num_mult):
                 if isinstance(self.mult_arity, int):
@@ -2311,12 +2304,12 @@ class MatrixKAN(nn.Module):
                     else:
                         mult_k = mult_k * y[num_sum+2*k+i+1]
                 mult.append(mult_k)
-
+                
             y = y[:num_sum] + mult
-
+            
             for j in range(self.width_in[l+1]):
                 y[j] = self.node_scale[l][j] * y[j] + self.node_bias[l][j]
-
+            
             x = y
             symbolic_acts.append(x)
 
@@ -2327,7 +2320,7 @@ class MatrixKAN(nn.Module):
 
             assert len(output_layer) == len(means), 'output_normalizer does not match the output layer'
             assert len(output_layer) == len(stds), 'output_normalizer does not match the output layer'
-
+            
             output_layer = [(output_layer[i] * stds[i] + means[i]) for i in range(len(output_layer))]
             symbolic_acts[-1] = output_layer
 
@@ -2337,24 +2330,24 @@ class MatrixKAN(nn.Module):
 
         out_dim = len(symbolic_acts[-1])
         #return [symbolic_acts[-1][i] for i in range(len(symbolic_acts[-1]))], x0
-
+        
         if simplify:
             return [symbolic_acts[-1][i] for i in range(len(symbolic_acts[-1]))], x0
         else:
             return [symbolic_acts[-1][i] for i in range(len(symbolic_acts[-1]))], x0
-
-
+        
+        
     def expand_depth(self):
         '''
         expand network depth, add an indentity layer to the end. For usage, please refer to tutorials interp_3_KAN_compiler.ipynb.
-
+        
         Args:
         -----
             var : None or a list of sympy expression
                 input variables
             normalizer : [mean, std]
             output_normalizer : [mean, std]
-
+            
         Returns:
         --------
             None
@@ -2363,7 +2356,7 @@ class MatrixKAN(nn.Module):
 
         # add kanlayer, set mask to zero
         dim_out = self.width_in[-1]
-        layer = KANLayer(dim_out, dim_out, num=self.grid, k=self.k)
+        layer = MatrixKANLayer(dim_out, dim_out, num=self.grid, k=self.k)
         layer.mask *= 0.
         self.act_fun.append(layer)
 
@@ -2391,7 +2384,7 @@ class MatrixKAN(nn.Module):
     def expand_width(self, layer_id, n_added_nodes, sum_bool=True, mult_arity=2):
         '''
         expand network width. For usage, please refer to tutorials interp_3_KAN_compiler.ipynb.
-
+        
         Args:
         -----
             layer_id : int
@@ -2402,7 +2395,7 @@ class MatrixKAN(nn.Module):
                 if sum_bool == True, added nodes are addition nodes; otherwise multiplication nodes
             mult_arity : init
                 multiplication arity (the number of numbers to be multiplied)
-
+            
         Returns:
         --------
             None
@@ -2417,7 +2410,7 @@ class MatrixKAN(nn.Module):
                     new = Symbolic_KANLayer(in_dim, out_dim + n_added_nodes)
                     old = self.symbolic_fun[l]
                     in_id = np.arange(in_dim)
-                    out_id = np.arange(out_dim + n_added_nodes)
+                    out_id = np.arange(out_dim + n_added_nodes) 
 
                     for j in out_id:
                         for i in in_id:
@@ -2434,7 +2427,7 @@ class MatrixKAN(nn.Module):
                                 new.affine.data[j][i] = old.affine.data[j-n_added_nodes][i]
 
                     self.symbolic_fun[l] = new
-                    self.act_fun[l] = KANLayer(in_dim, out_dim + n_added_nodes, num=self.grid, k=self.k)
+                    self.act_fun[l] = MatrixKANLayer(in_dim, out_dim + n_added_nodes, num=self.grid, k=self.k)
                     self.act_fun[l].mask *= 0.
 
                     self.node_scale[l].data = torch.cat([torch.ones(n_added_nodes, device=self.device), self.node_scale[l].data])
@@ -2448,7 +2441,7 @@ class MatrixKAN(nn.Module):
                     new = Symbolic_KANLayer(in_dim + n_added_nodes, out_dim)
                     old = self.symbolic_fun[l]
                     in_id = np.arange(in_dim + n_added_nodes)
-                    out_id = np.arange(out_dim)
+                    out_id = np.arange(out_dim) 
 
                     for j in out_id:
                         for i in in_id:
@@ -2465,7 +2458,7 @@ class MatrixKAN(nn.Module):
                                 new.affine.data[j][i] = old.affine.data[j][i-n_added_nodes]
 
                     self.symbolic_fun[l] = new
-                    self.act_fun[l] = KANLayer(in_dim + n_added_nodes, out_dim, num=self.grid, k=self.k)
+                    self.act_fun[l] = MatrixKANLayer(in_dim + n_added_nodes, out_dim, num=self.grid, k=self.k)
                     self.act_fun[l].mask *= 0.
 
 
@@ -2496,7 +2489,7 @@ class MatrixKAN(nn.Module):
                                 new.affine.data[j][i] = old.affine.data[j][i]
 
                     self.symbolic_fun[l] = new
-                    self.act_fun[l] = KANLayer(in_dim, out_dim + n_added_subnodes, num=self.grid, k=self.k)
+                    self.act_fun[l] = MatrixKANLayer(in_dim, out_dim + n_added_subnodes, num=self.grid, k=self.k)
                     self.act_fun[l].mask *= 0.
 
                     self.node_scale[l].data = torch.cat([self.node_scale[l].data, torch.ones(n_added_nodes, device=self.device)])
@@ -2508,7 +2501,7 @@ class MatrixKAN(nn.Module):
                     new = Symbolic_KANLayer(in_dim + n_added_nodes, out_dim)
                     old = self.symbolic_fun[l]
                     in_id = np.arange(in_dim + n_added_nodes)
-                    out_id = np.arange(out_dim)
+                    out_id = np.arange(out_dim) 
 
                     for j in out_id:
                         for i in in_id:
@@ -2525,7 +2518,7 @@ class MatrixKAN(nn.Module):
                                 new.affine.data[j][i] = old.affine.data[j][i]
 
                     self.symbolic_fun[l] = new
-                    self.act_fun[l] = KANLayer(in_dim + n_added_nodes, out_dim, num=self.grid, k=self.k)
+                    self.act_fun[l] = MatrixKANLayer(in_dim + n_added_nodes, out_dim, num=self.grid, k=self.k)
                     self.act_fun[l].mask *= 0.
 
         _expand(layer_id-1, n_added_nodes, sum_bool, mult_arity, added_dim='out')
@@ -2538,24 +2531,24 @@ class MatrixKAN(nn.Module):
 
             self.width[layer_id][1] += n_added_nodes
             self.mult_arity[layer_id] += mult_arity
-
+            
     def perturb(self, mag=1.0, mode='non-intrusive'):
         '''
         preturb a network. For usage, please refer to tutorials interp_3_KAN_compiler.ipynb.
-
+        
         Args:
         -----
             mag : float
                 perturbation magnitude
             mode : str
                 pertubatation mode, choices = {'non-intrusive', 'all', 'minimal'}
-
+            
         Returns:
         --------
             None
         '''
         perturb_bool = {}
-
+        
         if mode == 'all':
             perturb_bool['aa_a'] = True
             perturb_bool['aa_i'] = True
@@ -2576,7 +2569,7 @@ class MatrixKAN(nn.Module):
             perturb_bool['ii'] = False
         else:
             raise Exception('mode not recognized, valid modes are \'all\', \'non-intrusive\', \'minimal\'.')
-
+                
         for l in range(self.depth):
             funs_name = self.symbolic_fun[l].funs_name
             for j in range(self.width_out[l+1]):
@@ -2587,9 +2580,9 @@ class MatrixKAN(nn.Module):
                     in_active = len([i for i, x in enumerate(in_array) if x != "0"]) > 0
                     dic = {True: 'a', False: 'i'}
                     edge_type = dic[in_active] + dic[out_active]
-
+                    
                     if l < self.depth - 1 or mode != 'non-intrusive':
-
+                    
                         if edge_type == 'aa':
                             if self.symbolic_fun[l].funs_name[j][i] == '0':
                                 edge_type += '_i'
@@ -2598,29 +2591,29 @@ class MatrixKAN(nn.Module):
 
                         if perturb_bool[edge_type]:
                             self.act_fun[l].mask.data[i][j] = mag
-
+                            
                     if l == self.depth - 1 and mode == 'non-intrusive':
-
+                        
                         self.act_fun[l].mask.data[i][j] = torch.tensor(1.)
                         self.act_fun[l].scale_base.data[i][j] = torch.tensor(0.)
                         self.act_fun[l].scale_sp.data[i][j] = torch.tensor(0.)
-
+                        
         self.get_act(self.cache_data)
-
+        
         self.log_history('perturb')
-
-
+                            
+                            
     def module(self, start_layer, chain):
         '''
         specify network modules
-
+        
         Args:
         -----
             start_layer : int
                 the earliest layer of the module
             chain : str
                 specify neurons in the module
-
+            
         Returns:
         --------
             None
@@ -2643,21 +2636,21 @@ class MatrixKAN(nn.Module):
             self.act_fun[cl].mask.data[np.ix_(id_in,id_out_other)] = 0.
             self.symbolic_fun[cl].mask.data[np.ix_(id_out,id_in_other)] = 0.
             self.symbolic_fun[cl].mask.data[np.ix_(id_out_other,id_in)] = 0.
-
+            
         self.log_history('module')
-
+        
     def tree(self, x=None, in_var=None, style='tree', sym_th=1e-3, sep_th=1e-1, skip_sep_test=False, verbose=False):
         '''
-        turn KAN into a tree
+        turn MatrixKAN into a tree
         '''
         if x == None:
             x = self.cache_data
         plot_tree(self, x, in_var=in_var, style=style, sym_th=sym_th, sep_th=sep_th, skip_sep_test=skip_sep_test, verbose=verbose)
-
-
+        
+        
     def speed(self, compile=False):
         '''
-        turn on KAN's speed mode
+        turn on MatrixKAN's speed mode
         '''
         self.symbolic_enabled=False
         self.save_act=False
@@ -2666,7 +2659,7 @@ class MatrixKAN(nn.Module):
             return torch.compile(self)
         else:
             return self
-
+        
     def get_act(self, x=None):
         '''
         collect intermidate activations
@@ -2682,7 +2675,7 @@ class MatrixKAN(nn.Module):
         self.save_act = True
         self.forward(x)
         self.save_act = save_act
-
+        
     def get_fun(self, l, i, j):
         '''
         get function (l,i,j)
@@ -2696,8 +2689,8 @@ class MatrixKAN(nn.Module):
         plt.figure(figsize=(3,3))
         plt.plot(inputs, outputs, marker="o")
         return inputs, outputs
-
-
+        
+        
     def history(self, k='all'):
         '''
         get history
@@ -2721,7 +2714,7 @@ class MatrixKAN(nn.Module):
         for l in range(depth):
             complexity += torch.sum(self.act_fun[l].mask > 0.)
         return complexity.item()
-
+    
     def evaluate(self, dataset):
         evaluation = {}
         evaluation['test_loss'] = torch.sqrt(torch.mean((self.forward(dataset['test_input']) - dataset['test_label'])**2)).item()
@@ -2729,31 +2722,31 @@ class MatrixKAN(nn.Module):
         evaluation['n_grid'] = self.grid
         # add other metrics (maybe accuracy)
         return evaluation
-
+    
     def swap(self, l, i1, i2, log_history=True):
-
+        
         self.act_fun[l-1].swap(i1,i2,mode='out')
         self.symbolic_fun[l-1].swap(i1,i2,mode='out')
         self.act_fun[l].swap(i1,i2,mode='in')
         self.symbolic_fun[l].swap(i1,i2,mode='in')
-
+        
         def swap_(data, i1, i2):
             data[i1], data[i2] = data[i2], data[i1]
-
+            
         swap_(self.node_scale[l-1].data, i1, i2)
         swap_(self.node_bias[l-1].data, i1, i2)
         swap_(self.subnode_scale[l-1].data, i1, i2)
         swap_(self.subnode_bias[l-1].data, i1, i2)
-
+        
         if log_history:
             self.log_history('swap')
-
+            
     @property
     def connection_cost(self):
-
+        
         cc = 0.
         for t in self.edge_scores:
-
+            
             def get_coordinate(n):
                 return torch.linspace(0,1,steps=n+1, device=self.device)[:n] + 1/(2*n)
 
@@ -2767,7 +2760,7 @@ class MatrixKAN(nn.Module):
             cc += torch.sum(dist * t)
 
         return cc
-
+    
     def auto_swap_l(self, l):
 
         num = self.width_in[1]
@@ -2790,7 +2783,7 @@ class MatrixKAN(nn.Module):
         depth = self.depth
         for l in range(1, depth):
             self.auto_swap_l(l)
-
+            
         self.log_history('auto_swap')
 
 KAN = MatrixKAN
