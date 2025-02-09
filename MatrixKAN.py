@@ -2,17 +2,14 @@ import torch
 import torch.nn as nn
 import numpy as np
 from MatrixKANLayer import MatrixKANLayer
-# from .Symbolic_MultKANLayer import *
 from kan.Symbolic_KANLayer import Symbolic_KANLayer
 from kan.LBFGS import *
 import os
-import glob
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import random
 import copy
 import pandas as pd
-from sympy.printing import latex
 from sympy import *
 import sympy
 import yaml
