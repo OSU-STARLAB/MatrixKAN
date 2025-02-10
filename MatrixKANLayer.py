@@ -81,12 +81,6 @@ class MatrixKANLayer(nn.Module):
         Returns:
         --------
             self
-            
-        Example
-        -------
-        >>> from kan.KANLayer import *
-        >>> model = KANLayer(in_dim=3, out_dim=5)
-        >>> (model.in_dim, model.out_dim)
         '''
         super(MatrixKANLayer, self).__init__()
         # size 
@@ -138,7 +132,7 @@ class MatrixKANLayer(nn.Module):
         Compute the basis matrix for a uniform B-spline with a given spline degree.
 
         Returns:
-            torch.Tensor: Basis matrix tensor of shape (spline_order + 1, spline_order + 1).
+            torch.Tensor: Basis matrix tensor.
         """
 
         basis_matrix = torch.tensor([
@@ -175,11 +169,11 @@ class MatrixKANLayer(nn.Module):
         Compute power bases for the given input tensor.
 
         Args:
-            x (torch.Tensor):                   Input tensor of shape (batch_size, sequence length, in_features).
+            x (torch.Tensor):                   Input tensor.
 
         Returns:
-            u (torch.Tensor):                   Power bases tensor of shape
-                                                (batch_size, sequence length, in_features, spline_order + 1).
+            u (torch.Tensor):                   Power bases tensor.
+            x_intervals (torch.Tensor):         Tensor representing the applicable grid interval for each input value.
         """
 
         # Determine applicable grid interval boundary values
@@ -215,10 +209,10 @@ class MatrixKANLayer(nn.Module):
         Computes the b-spline output based on the given input tensor.
 
         Args:
-            x (torch.Tensor):   Input tensor of shape (batch_size, sequence length, in_features).                       ######### CONFIRM SIZES ##########
+            x (torch.Tensor):       Input tensor.
 
         Returns:
-            torch.Tensor:                                                                                               ######## COMPLETE ME #############
+            result (torch.Tensor):   Tensor representing the outputs of each basis function.
         """
 
         # Calculate power bases and applicable grid intervals
@@ -263,10 +257,10 @@ class MatrixKANLayer(nn.Module):
         Computes b-spline output based on the given input tensor and spline coefficients.
 
         Args:
-            x (torch.Tensor):   Input tensor of shape (batch_size, sequence length, in_features).
+            x (torch.Tensor):   Input tensor.
 
         Returns:
-            torch.Tensor:       Power bases tensor of shape (batch_size, sequence length, out_features).
+            result (torch.Tensor):   Tensor representing the outputs of each B-spline.
         """
 
         # Calculate basis function outputs
@@ -296,14 +290,6 @@ class MatrixKANLayer(nn.Module):
                 the outputs of activation functions with preacts as inputs
             postspline : 3D torch.float
                 the outputs of spline functions with preacts as inputs
-        
-        Example
-        -------
-        >>> from kan.KANLayer import *
-        >>> model = KANLayer(in_dim=3, out_dim=5)
-        >>> x = torch.normal(0,1,size=(100,3))
-        >>> y, preacts, postacts, postspline = model(x)
-        >>> y.shape, preacts.shape, postacts.shape, postspline.shape
         '''
         batch = x.shape[0]
         preacts = x[:,None,:].clone().expand(batch, self.out_dim, self.in_dim)
@@ -333,14 +319,6 @@ class MatrixKANLayer(nn.Module):
         Returns:
         --------
             None
-        
-        Example
-        -------
-        >>> model = KANLayer(in_dim=1, out_dim=1, num=5, k=3)
-        >>> print(model.grid.data)
-        >>> x = torch.linspace(-3,3,steps=100)[:,None]
-        >>> model.update_grid_from_samples(x)
-        >>> print(model.grid.data)
         '''
         
         batch = x.shape[0]
@@ -383,16 +361,6 @@ class MatrixKANLayer(nn.Module):
         Returns:
         --------
             None
-          
-        Example
-        -------
-        >>> batch = 100
-        >>> parent_model = KANLayer(in_dim=1, out_dim=1, num=5, k=3)
-        >>> print(parent_model.grid.data)
-        >>> model = KANLayer(in_dim=1, out_dim=1, num=10, k=3)
-        >>> x = torch.normal(0,1,size=(batch, 1))
-        >>> model.initialize_grid_from_parent(parent_model, x)
-        >>> print(model.grid.data)
         '''
         
         batch = x.shape[0]
@@ -437,13 +405,6 @@ class MatrixKANLayer(nn.Module):
         Returns:
         --------
             spb : MatrixKANLayer
-            
-        Example
-        -------
-        >>> kanlayer_large = KANLayer(in_dim=10, out_dim=10, num=5, k=3)
-        >>> kanlayer_small = kanlayer_large.get_subset([0,9],[1,2,3])
-        >>> kanlayer_small.in_dim, kanlayer_small.out_dim
-        (2, 3)
         '''
         spb = MatrixKANLayer(len(in_id), len(out_id), self.num, self.k, base_fun=self.base_fun)
         spb.grid.data = self.grid[in_id]
@@ -471,14 +432,6 @@ class MatrixKANLayer(nn.Module):
         Returns:
         --------
             None
-            
-        Example
-        -------
-        >>> from kan.KANLayer import *
-        >>> model = KANLayer(in_dim=2, out_dim=2, num=5, k=3)
-        >>> print(model.coef)
-        >>> model.swap(0,1,mode='in')
-        >>> print(model.coef)
         '''
         with torch.no_grad():
             def swap_(data, i1, i2, mode='in'):

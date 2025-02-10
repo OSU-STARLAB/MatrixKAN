@@ -141,13 +141,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             self
-            
-        Example
-        -------
-        >>> from kan import *
-        >>> model = KAN(width=[2,5,1], grid=5, k=3, seed=0)
-        checkpoint directory created: ./model
-        saving model version 0.0
         '''
         super(MatrixKAN, self).__init__()
 
@@ -278,13 +271,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             self
-            
-        Example
-        -------
-        >>> from kan import *
-        >>> device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        >>> model = KAN(width=[2,5,1], grid=5, k=3, seed=0)
-        >>> model.to(device)
         '''
         super(MatrixKAN, self).to(device)
         self.device = device
@@ -360,14 +346,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             self
-            
-        Example
-        -------
-        >>> from kan import *
-        >>> model1 = KAN(width=[2,5,1], grid=3)
-        >>> model2 = KAN(width=[2,5,1], grid=10)
-        >>> x = torch.rand(100,2)
-        >>> model2.initialize_from_another_model(model1, x)
         '''
         another_model(x)  # get activations
         batch = x.shape[0]
@@ -427,22 +405,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             a refined model : MatrixKAN
-            
-        Example
-        -------
-        >>> from kan import *
-        >>> device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        >>> model = KAN(width=[2,5,1], grid=5, k=3, seed=0)
-        >>> print(model.grid)
-        >>> x = torch.rand(100,2)
-        >>> model.get_act(x)
-        >>> model = model.refine(10)
-        >>> print(model.grid)
-        checkpoint directory created: ./model
-        saving model version 0.0
-        5
-        saving model version 0.1
-        10
         '''
 
         model_new = MatrixKAN(width=self.width,
@@ -485,14 +447,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             None
-            
-        Example
-        -------
-        >>> from kan import *
-        >>> device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        >>> model = KAN(width=[2,5,1], grid=5, k=3, seed=0)
-        >>> model.saveckpt('./mark')
-        # There will be three files appearing in the current folder: mark_cache_data, mark_config.yml, mark_state
         '''
     
         model = self
@@ -538,13 +492,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             MatrixKAN
-            
-        Example
-        -------
-        >>> from kan import *
-        >>> model = KAN(width=[2,5,1], grid=5, k=3, seed=0)
-        >>> model.saveckpt('./mark')
-        >>> KAN.loadckpt('./mark')
         '''
         with open(f'{path}_config.yml', 'r') as stream:
             config = yaml.safe_load(stream)
@@ -598,15 +545,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             MatrixKAN
-            
-        Example
-        -------
-        >>> from kan import *
-        >>> model = KAN(width=[1,1], grid=5, k=3, seed=0)
-        >>> model2 = model.copy()
-        >>> model2.act_fun[0].coef.data *= 2
-        >>> print(model2.act_fun[0].coef.data)
-        >>> print(model.act_fun[0].coef.data)
         '''
         path='copy_temp'
         self.saveckpt(path)
@@ -624,10 +562,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             MatrixKAN
-            
-        Example
-        -------
-        Please refer to tutorials. API 12: Checkpoint, save & load model
         ''' 
         self.round += 1
         self.state_id = model_id.split('.')[-1]
@@ -655,10 +589,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             MatrixKAN
-            
-        Example
-        -------
-        Same use as rewind, although checkout doesn't change states
         ''' 
         return MatrixKAN.loadckpt(path=self.ckpt_path+'/'+str(model_id))
     
@@ -674,15 +604,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             None
-            
-        Example
-        -------
-        >>> from kan import *
-        >>> model = KAN(width=[1,1], grid=5, k=3, seed=0)
-        >>> print(model.act_fun[0].grid)
-        >>> x = torch.linspace(-10,10,steps=101)[:,None]
-        >>> model.update_grid_from_samples(x)
-        >>> print(model.act_fun[0].grid)
         ''' 
         for l in range(self.depth):
             self.get_act(x)
@@ -708,16 +629,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             None
-            
-        Example
-        -------
-        >>> from kan import *
-        >>> model = KAN(width=[1,1], grid=5, k=3, seed=0)
-        >>> print(model.act_fun[0].grid)
-        >>> x = torch.linspace(-10,10,steps=101)[:,None]
-        >>> model2 = KAN(width=[1,1], grid=10, k=3, seed=0)
-        >>> model2.initialize_grid_from_another_model(model, x)
-        >>> print(model2.act_fun[0].grid)
         '''
         model(x)
         for l in range(self.depth):
@@ -739,23 +650,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             None
-            
-        Example1
-        --------
-        >>> from kan import *
-        >>> model = KAN(width=[2,5,1], grid=5, k=3, seed=0)
-        >>> x = torch.rand(100,2)
-        >>> model(x).shape
-        
-        Example2
-        --------
-        >>> from kan import *
-        >>> model = KAN(width=[1,1], grid=5, k=3, seed=0)
-        >>> x = torch.tensor([[1],[-0.01]])
-        >>> model.fix_symbolic(0,0,0,'log',fit_params_bool=False)
-        >>> print(model(x))
-        >>> print(model(x, singularity_avoiding=True))
-        >>> print(model(x, singularity_avoiding=True, y_th=1.))
         '''
         x = x[:,self.input_id.long()]
         assert x.shape[1] == self.width_in[0]
@@ -902,24 +796,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             None or r2 (coefficient of determination)
-            
-        Example 1 
-        ---------
-        >>> # when fit_params_bool = False
-        >>> model = KAN(width=[2,5,1], grid=5, k=3)
-        >>> model.fix_symbolic(0,1,3,'sin',fit_params_bool=False)
-        >>> print(model.act_fun[0].mask.reshape(2,5))
-        >>> print(model.symbolic_fun[0].mask.reshape(2,5))
-                    
-        Example 2
-        ---------
-        >>> # when fit_params_bool = True
-        >>> model = KAN(width=[2,5,1], grid=5, k=3, noise_scale=1.)
-        >>> x = torch.normal(0,1,size=(100,2))
-        >>> model(x) # obtain activations (otherwise model does not have attributes acts)
-        >>> model.fix_symbolic(0,1,3,'sin',fit_params_bool=True)
-        >>> print(model.act_fun[0].mask.reshape(2,5))
-        >>> print(model.symbolic_fun[0].mask.reshape(2,5))
         '''
         if not fit_params_bool:
             self.symbolic_fun[l].fix_symbolic(i, j, fun_name, verbose=verbose, random=random)
@@ -979,13 +855,6 @@ class MatrixKAN(nn.Module):
                 minimum of output
             y_max : float
                 maximum of output
-        
-        Example
-        -------
-        >>> model = KAN(width=[2,3,1], grid=5, k=3, noise_scale=1.)
-        >>> x = torch.normal(0,1,size=(100,2))
-        >>> model(x) # do a forward pass to obtain model.acts
-        >>> model.get_range(0,0,0)
         '''
         x = self.spline_preacts[l][:, j, i]
         y = self.spline_postacts[l][:, j, i]
@@ -1026,14 +895,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             Figure
-            
-        Example
-        -------
-        >>> # see more interactive examples in demos
-        >>> model = KAN(width=[2,3,1], grid=3, k=3, noise_scale=1.0)
-        >>> x = torch.normal(0,1,size=(100,2))
-        >>> model(x) # do a forward pass to obtain model.acts
-        >>> model.plot()
         '''
         global Symbol
         
@@ -1307,13 +1168,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             reg_ : torch.float
-        
-        Example
-        -------
-        >>> model = KAN(width=[2,3,1], grid=5, k=3, noise_scale=1.)
-        >>> x = torch.rand(100,2)
-        >>> model.get_act(x)
-        >>> model.reg('edge_forward_spline_n', 1.0, 2.0, 1.0, 1.0)
         '''
         if reg_metric == 'edge_forward_spline_n':
             acts_scale = self.acts_scale_spline
@@ -1445,16 +1299,6 @@ class MatrixKAN(nn.Module):
                 results['test_loss'], 1D array of test losses (RMSE)
                 results['reg'], 1D array of regularization
                 other metrics specified in metrics
-
-        Example
-        -------
-        >>> from kan import *
-        >>> model = KAN(width=[2,5,1], grid=5, k=3, noise_scale=0.3, seed=2)
-        >>> f = lambda x: torch.exp(torch.sin(torch.pi*x[:,[0]]) + x[:,[1]]**2)
-        >>> dataset = create_dataset(f, n_var=2)
-        >>> model.fit(dataset, opt='LBFGS', steps=20, lamb=0.001);
-        >>> model.plot()
-        # Most examples in toturals involve the fit() method. Please check them for useness.
         '''
 
         if lamb > 0. and not self.save_act:
@@ -1597,16 +1441,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             pruned network : MatrixKAN
-
-        Example
-        -------
-        >>> from kan import *
-        >>> model = KAN(width=[2,5,1], grid=5, k=3, noise_scale=0.3, seed=2)
-        >>> f = lambda x: torch.exp(torch.sin(torch.pi*x[:,[0]]) + x[:,[1]]**2)
-        >>> dataset = create_dataset(f, n_var=2)
-        >>> model.fit(dataset, opt='LBFGS', steps=20, lamb=0.001);
-        >>> model = model.prune_node()
-        >>> model.plot()
         '''
         if self.acts == None:
             self.get_act()
@@ -1732,16 +1566,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             pruned network : MatrixKAN
-
-        Example
-        -------
-        >>> from kan import *
-        >>> model = KAN(width=[2,5,1], grid=5, k=3, noise_scale=0.3, seed=2)
-        >>> f = lambda x: torch.exp(torch.sin(torch.pi*x[:,[0]]) + x[:,[1]]**2)
-        >>> dataset = create_dataset(f, n_var=2)
-        >>> model.fit(dataset, opt='LBFGS', steps=20, lamb=0.001);
-        >>> model = model.prune_edge()
-        >>> model.plot()
         '''
         if self.acts == None:
             self.get_act()
@@ -1768,16 +1592,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             pruned network : MatrixKAN
-
-        Example
-        -------
-        >>> from kan import *
-        >>> model = KAN(width=[2,5,1], grid=5, k=3, noise_scale=0.3, seed=2)
-        >>> f = lambda x: torch.exp(torch.sin(torch.pi*x[:,[0]]) + x[:,[1]]**2)
-        >>> dataset = create_dataset(f, n_var=2)
-        >>> model.fit(dataset, opt='LBFGS', steps=20, lamb=0.001);
-        >>> model = model.prune()
-        >>> model.plot()
         '''
         if self.acts == None:
             self.get_act()
@@ -1805,30 +1619,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             pruned network : MatrixKAN
-
-        Example1
-        --------
-        >>> # automatic
-        >>> from kan import *
-        >>> model = KAN(width=[3,5,1], grid=5, k=3, noise_scale=0.3, seed=2)
-        >>> f = lambda x: 1 * x[:,[0]]**2 + 0.3 * x[:,[1]]**2 + 0.0 * x[:,[2]]**2
-        >>> dataset = create_dataset(f, n_var=3)
-        >>> model.fit(dataset, opt='LBFGS', steps=20, lamb=0.001);
-        >>> model.plot()
-        >>> model = model.prune_input()
-        >>> model.plot()
-        
-        Example2
-        --------
-        >>> # automatic
-        >>> from kan import *
-        >>> model = KAN(width=[3,5,1], grid=5, k=3, noise_scale=0.3, seed=2)
-        >>> f = lambda x: 1 * x[:,[0]]**2 + 0.3 * x[:,[1]]**2 + 0.0 * x[:,[2]]**2
-        >>> dataset = create_dataset(f, n_var=3)
-        >>> model.fit(dataset, opt='LBFGS', steps=20, lamb=0.001);
-        >>> model.plot()
-        >>> model = model.prune_input(active_inputs=[0,1])
-        >>> model.plot()
         '''
         if active_inputs == None:
             self.attribute()
@@ -1904,16 +1694,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             attribution scores
-
-        Example
-        -------
-        >>> from kan import *
-        >>> model = KAN(width=[3,5,1], grid=5, k=3, noise_scale=0.3, seed=2)
-        >>> f = lambda x: 1 * x[:,[0]]**2 + 0.3 * x[:,[1]]**2 + 0.0 * x[:,[2]]**2
-        >>> dataset = create_dataset(f, n_var=3)
-        >>> model.fit(dataset, opt='LBFGS', steps=20, lamb=0.001);
-        >>> model.attribute()
-        >>> model.feature_score
         '''
         # output (out_dim, in_dim)
         
@@ -2033,16 +1813,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             dictionary
-
-        Example
-        -------
-        >>> from kan import *
-        >>> model = KAN(width=[3,5,1], grid=5, k=3, noise_scale=0.3, seed=2)
-        >>> f = lambda x: 1 * x[:,[0]]**2 + 0.3 * x[:,[1]]**2 + 0.0 * x[:,[2]]**2
-        >>> dataset = create_dataset(f, n_var=3)
-        >>> model.fit(dataset, opt='LBFGS', steps=20, lamb=0.001);
-        >>> model.attribute()
-        >>> model.feature_interaction(1)
         '''
         dic = {}
         width = self.width_in[l]
@@ -2092,15 +1862,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             best_name (str), best_fun (function), best_r2 (float), best_c (float)
-
-        Example
-        -------
-        >>> from kan import *
-        >>> model = KAN(width=[2,1,1], grid=5, k=3, noise_scale=0.0, seed=0)
-        >>> f = lambda x: torch.exp(torch.sin(torch.pi*x[:,[0]])+x[:,[1]]**2)
-        >>> dataset = create_dataset(f, n_var=3)
-        >>> model.fit(dataset, opt='LBFGS', steps=20, lamb=0.001);
-        >>> model.suggest_symbolic(0,1,0)
         '''
         r2s = []
         cs = []
@@ -2180,15 +1941,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             None
-
-        Example
-        -------
-        >>> from kan import *
-        >>> model = KAN(width=[2,1,1], grid=5, k=3, noise_scale=0.0, seed=0)
-        >>> f = lambda x: torch.exp(torch.sin(torch.pi*x[:,[0]])+x[:,[1]]**2)
-        >>> dataset = create_dataset(f, n_var=3)
-        >>> model.fit(dataset, opt='LBFGS', steps=20, lamb=0.001);
-        >>> model.auto_symbolic()
         '''
         for l in range(len(self.width_in) - 1):
             for i in range(self.width_in[l]):
@@ -2223,16 +1975,6 @@ class MatrixKAN(nn.Module):
         Returns:
         --------
             None
-
-        Example
-        -------
-        >>> from kan import *
-        >>> model = KAN(width=[2,1,1], grid=5, k=3, noise_scale=0.0, seed=0)
-        >>> f = lambda x: torch.exp(torch.sin(torch.pi*x[:,[0]])+x[:,[1]]**2)
-        >>> dataset = create_dataset(f, n_var=3)
-        >>> model.fit(dataset, opt='LBFGS', steps=20, lamb=0.001);
-        >>> model.auto_symbolic()
-        >>> model.symbolic_formula()[0][0]
         '''
         
         symbolic_acts = []
