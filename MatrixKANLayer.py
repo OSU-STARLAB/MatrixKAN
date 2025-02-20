@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
 import numpy as np
+import kan
 from kan.spline import *
 from kan.utils import sparse_mask
 
 
-class MatrixKANLayer(nn.Module):
+class MatrixKANLayer(kan.KANLayer, nn.Module):
     """
     MatrixKANLayer class
     
@@ -42,7 +43,7 @@ class MatrixKANLayer(nn.Module):
     """
 
     def __init__(self, in_dim=3, out_dim=2, num=5, k=3, noise_scale=0.5, scale_base_mu=0.0, scale_base_sigma=1.0, scale_sp=1.0, base_fun=torch.nn.SiLU(), grid_eps=0.02, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, save_plot_data = True, device='cpu', sparse_init=False):
-        ''''
+        """
         initialize a MatrixKANLayer
         
         Args:
@@ -81,8 +82,8 @@ class MatrixKANLayer(nn.Module):
         Returns:
         --------
             self
-        '''
-        super(MatrixKANLayer, self).__init__()
+        """
+        nn.Module.__init__(self)
         # size 
         self.out_dim = out_dim
         self.in_dim = in_dim
@@ -121,11 +122,12 @@ class MatrixKANLayer(nn.Module):
         self.grid_eps = grid_eps
         
         self.to(device)
-        
-    def to(self, device):
-        super(MatrixKANLayer, self).to(device)
-        self.device = device    
-        return self
+
+    def __getattribute__(self, name):
+        """Dynamically replaces MultKAN and KANLayer calls with calls to MatrixKAN and MatrixKANLayer."""
+        if name == "KANLayer":
+            return MatrixKANLayer
+        return super().__getattribute__(name)
 
     def calculate_basis_matrix(self):
         """
@@ -390,60 +392,4 @@ class MatrixKANLayer(nn.Module):
         grid = extend_grid(grid, k_extend=self.k)
         self.grid.data = grid
         self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
-
-    def get_subset(self, in_id, out_id):
-        '''
-        get a smaller MatrixKANLayer from a larger MatrixKANLayer (used for pruning)
-        
-        Args:
-        -----
-            in_id : list
-                id of selected input neurons
-            out_id : list
-                id of selected output neurons
-            
-        Returns:
-        --------
-            spb : MatrixKANLayer
-        '''
-        spb = MatrixKANLayer(len(in_id), len(out_id), self.num, self.k, base_fun=self.base_fun)
-        spb.grid.data = self.grid[in_id]
-        spb.coef.data = self.coef[in_id][:,out_id]
-        spb.scale_base.data = self.scale_base[in_id][:,out_id]
-        spb.scale_sp.data = self.scale_sp[in_id][:,out_id]
-        spb.mask.data = self.mask[in_id][:,out_id]
-
-        spb.in_dim = len(in_id)
-        spb.out_dim = len(out_id)
-        return spb
-    
-    
-    def swap(self, i1, i2, mode='in'):
-        '''
-        swap the i1 neuron with the i2 neuron in input (if mode == 'in') or output (if mode == 'out') 
-        
-        Args:
-        -----
-            i1 : int
-            i2 : int
-            mode : str
-                mode = 'in' or 'out'
-            
-        Returns:
-        --------
-            None
-        '''
-        with torch.no_grad():
-            def swap_(data, i1, i2, mode='in'):
-                if mode == 'in':
-                    data[i1], data[i2] = data[i2].clone(), data[i1].clone()
-                elif mode == 'out':
-                    data[:,i1], data[:,i2] = data[:,i2].clone(), data[:,i1].clone()
-
-            if mode == 'in':
-                swap_(self.grid.data, i1, i2, mode='in')
-            swap_(self.coef.data, i1, i2, mode=mode)
-            swap_(self.scale_base.data, i1, i2, mode=mode)
-            swap_(self.scale_sp.data, i1, i2, mode=mode)
-            swap_(self.mask.data, i1, i2, mode=mode)
 
