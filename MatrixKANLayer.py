@@ -124,7 +124,7 @@ class MatrixKANLayer(kan.KANLayer, nn.Module):
         self.to(device)
 
     def __getattribute__(self, name):
-        """Dynamically replaces MultKAN and KANLayer calls with calls to MatrixKAN and MatrixKANLayer."""
+        """Dynamically replaces KANLayer calls with calls to MatrixKANLayer."""
         if name == "KANLayer":
             return MatrixKANLayer
         return super().__getattribute__(name)
@@ -274,7 +274,7 @@ class MatrixKANLayer(kan.KANLayer, nn.Module):
         return result
 
     def forward(self, x):
-        '''
+        """
         MatrixKANLayer forward given input x
         
         Args:
@@ -292,7 +292,8 @@ class MatrixKANLayer(kan.KANLayer, nn.Module):
                 the outputs of activation functions with preacts as inputs
             postspline : 3D torch.float
                 the outputs of spline functions with preacts as inputs
-        '''
+        """
+
         batch = x.shape[0]
         preacts = x[:,None,:].clone().expand(batch, self.out_dim, self.in_dim)
             
@@ -310,7 +311,7 @@ class MatrixKANLayer(kan.KANLayer, nn.Module):
         return y, preacts, postacts, postspline
 
     def update_grid_from_samples(self, x, mode='sample'):
-        '''
+        """
         update grid from samples
         
         Args:
@@ -321,7 +322,7 @@ class MatrixKANLayer(kan.KANLayer, nn.Module):
         Returns:
         --------
             None
-        '''
+        """
         
         batch = x.shape[0]
         x_pos = torch.sort(x, dim=0)[0]
@@ -350,7 +351,7 @@ class MatrixKANLayer(kan.KANLayer, nn.Module):
         self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
 
     def initialize_grid_from_parent(self, parent, x, mode='sample'):
-        '''
+        """
         update grid from a parent MatrixKANLayer & samples
         
         Args:
@@ -363,7 +364,7 @@ class MatrixKANLayer(kan.KANLayer, nn.Module):
         Returns:
         --------
             None
-        '''
+        """
         
         batch = x.shape[0]
         
