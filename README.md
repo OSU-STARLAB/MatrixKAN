@@ -54,7 +54,15 @@ prune() - Pruning of MatrixKAN networks sometimes results in NaN parameter value
 
 ## Citation
 ```python
-*************TO BE ADDED*******************
+@misc{coffman2025matrixkanparallelizedkolmogorovarnoldnetwork,
+      title={MatrixKAN: Parallelized Kolmogorov-Arnold Network}, 
+      author={Cale Coffman and Lizhong Chen},
+      year={2025},
+      eprint={2502.07176},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2502.07176}, 
+}
 ```
 
 ## Credits
