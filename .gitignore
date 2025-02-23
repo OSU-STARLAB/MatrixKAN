@@ -1,2 +1,5 @@
 venv/
 .idea/
+model/
+figures/
+__pycache__/
