@@ -53,7 +53,7 @@ prune() - Pruning of MatrixKAN networks sometimes results in NaN parameter value
 
 ## CHANGELOG
 
-All notable changes to this project will be documented in [Changelog](COMPLETE ME).
+All notable changes to this project will be documented in [Changelog](https://github.com/OSU-STARLAB/MatrixKAN/blob/multi-inheritance/CHANGELOG.md).
 
 <ins>Current Version</ins>: 1.1.0
 
