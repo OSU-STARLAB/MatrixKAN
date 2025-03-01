@@ -51,6 +51,11 @@ pip install -r Requirements.txt
 
 prune() - Pruning of MatrixKAN networks sometimes results in NaN parameter values.
 
+## CHANGELOG
+
+All notable changes to this project will be documented in [Changelog](COMPLETE ME).
+
+<ins>Current Version</ins>: 1.1.0
 
 ## Citation
 ```python
